@@ -1349,18 +1349,8 @@ const SplitTreeSplit = extern struct {
         const priv = self.private();
         const paned = priv.paned;
 
-        // Current, min, and max positions as pixels.
+        // Current and max positions as pixels.
         const pos = paned.getPosition();
-        const min = min: {
-            var val = gobject.ext.Value.new(c_int);
-            defer val.unset();
-            gobject.Object.getProperty(
-                paned.as(gobject.Object),
-                "min-position",
-                &val,
-            );
-            break :min gobject.ext.Value.get(&val, c_int);
-        };
         const max = max: {
             var val = gobject.ext.Value.new(c_int);
             defer val.unset();
@@ -1372,20 +1362,36 @@ const SplitTreeSplit = extern struct {
             break :max gobject.ext.Value.get(&val, c_int);
         };
 
-        // We don't actually use min, but we don't expect this to ever
-        // be non-zero, so let's add an assert to ensure that.
-        assert(min == 0);
-
         // If our max is zero then we can't do any math. I don't know
         // if this is possible but I suspect it can be if you make a nested
         // split completely minimized.
         if (max == 0) return;
 
+        // Our children can't shrink below their minimum size, so the paned
+        // clamps the position between its min-position and max-position,
+        // where max-position excludes the minimum size of the end child.
+        // Our ratio is relative to the full size available to the children
+        // (i.e. including the end child's minimum size) so that a ratio of
+        // 0.5 gives both children the same size.
+        const full: c_int = full: {
+            const end_child = paned.getEndChild() orelse break :full max;
+            var end_min: c_int = 0;
+            end_child.measure(
+                paned.as(gtk.Orientable).getOrientation(),
+                -1,
+                &end_min,
+                null,
+                null,
+                null,
+            );
+            break :full max + end_min;
+        };
+
         // Determine our current ratio.
         const current_ratio: f64 = ratio: {
             const pos_f64: f64 = @floatFromInt(pos);
-            const max_f64: f64 = @floatFromInt(max);
-            break :ratio pos_f64 / max_f64;
+            const full_f64: f64 = @floatFromInt(full);
+            break :ratio pos_f64 / full_f64;
         };
         const desired_ratio: f64 = priv.ratio;
 
@@ -1408,8 +1414,8 @@ const SplitTreeSplit = extern struct {
                 // the desired ratio. E.g. with max-position=2 you can only have
                 // ratios 0, 0.5 and 1.
                 const desired_pos: c_int = desired_pos: {
-                    const max_f64: f64 = @floatFromInt(max);
-                    break :desired_pos @intFromFloat(@round(max_f64 * desired_ratio));
+                    const full_f64: f64 = @floatFromInt(full);
+                    break :desired_pos @intFromFloat(@round(full_f64 * desired_ratio));
                 };
                 paned.setPosition(desired_pos);
             },
