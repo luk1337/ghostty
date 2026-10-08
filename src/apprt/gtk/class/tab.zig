@@ -12,6 +12,7 @@ const ext = @import("../ext.zig");
 const gresource = @import("../build/gresource.zig");
 const Common = @import("../class.zig").Common;
 const Config = @import("config.zig").Config;
+const Allocator = std.mem.Allocator;
 const Application = @import("application.zig").Application;
 const SplitTree = @import("split_tree.zig").SplitTree;
 const Surface = @import("surface.zig").Surface;
@@ -219,6 +220,24 @@ pub const Tab = extern struct {
             },
         };
 
+        return tab;
+    }
+
+    /// Create a new tab containing an existing surface. The caller is
+    /// responsible for removing the surface from its previous split tree.
+    pub fn newForSurface(config: ?*Config, surface: *Surface) Allocator.Error!*Self {
+        const tab = gobject.ext.newInstance(Tab, .{});
+        errdefer {
+            // Widgets start with a floating reference.
+            _ = tab.as(gobject.Object).refSink();
+            tab.as(gobject.Object).unref();
+        }
+
+        const priv: *Private = tab.private();
+        priv.config = if (config) |c| c.ref() else Application.default().getConfig();
+        tab.as(gobject.Object).notifyByPspec(properties.config.impl.param_spec);
+
+        try priv.split_tree.setSingleSurface(surface);
         return tab;
     }
 
