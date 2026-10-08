@@ -602,6 +602,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             bg_image_fit: configpkg.BackgroundImageFit,
             bg_image_repeat: bool,
             links: link.Set,
+            link_hover_highlight: bool,
             vsync: bool,
             colorspace: configpkg.Config.WindowColorspace,
             blending: configpkg.Config.AlphaBlending,
@@ -677,6 +678,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .bg_image_fit = config.@"background-image-fit",
                     .bg_image_repeat = config.@"background-image-repeat",
                     .links = links,
+                    .link_hover_highlight = config.@"link-hover-highlight",
                     .vsync = config.@"window-vsync",
                     .colorspace = config.@"window-colorspace",
                     .blending = config.@"alpha-blending",
@@ -1501,8 +1503,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     // If our mouse isn't hovering, we have no links.
                     const vp = state.mouse.point orelse break :osc8 .empty;
 
-                    // If the right mods aren't pressed, then we can't match.
-                    if (!state.mouse.mods.equal(inputpkg.ctrlOrSuper(.{})))
+                    // If the right mods aren't pressed, then we can't match,
+                    // unless links are highlighted on hover without mods.
+                    if (!self.config.link_hover_highlight and
+                        !state.mouse.mods.equal(inputpkg.ctrlOrSuper(.{})))
                         break :osc8 .empty;
 
                     break :osc8 self.terminal_state.linkCells(
