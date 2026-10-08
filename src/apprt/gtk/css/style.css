@@ -224,6 +224,14 @@ label.resize-overlay {
 }
 
 /*
+ * Tilix titlebar style
+ */
+.tab-switcher-new {
+  padding-left: 2px;
+  padding-right: 2px;
+}
+
+/*
  * Command Palette
  */
 .command-palette-search > image:first-child {
