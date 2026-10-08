@@ -200,9 +200,11 @@ label.resize-overlay {
  * Split title bar (Tilix style)
  */
 .split-titlebar {
-  background-color: @headerbar_bg_color;
-  color: @headerbar_fg_color;
-  border-bottom: 1px solid @headerbar_shade_color;
+  /* The background comes from the "background" style class (the theme's
+   * window background), or the libadwaita headerbar colors in the runtime
+   * CSS when no GTK theme is forced. The border is themed in the runtime
+   * CSS when supported (GTK 4.16+). */
+  border-bottom: 1px solid alpha(currentColor, 0.15);
   font-size: 0.9em;
 }
 

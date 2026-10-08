@@ -37,6 +37,13 @@ template $GhosttyWindow: Adw.ApplicationWindow {
 
       [top]
       Adw.HeaderBar {
+        // GTK themes (e.g. when forced with GTK_THEME) commonly only style
+        // window controls within a "titlebar", which is what a header bar
+        // set as a window's titlebar gets. Ours is inside the toolbar view.
+        styles [
+          "titlebar",
+        ]
+
         visible: bind template.headerbar-visible;
 
         title-widget: Adw.WindowTitle {

@@ -32,6 +32,7 @@ const ext = @import("../ext.zig");
 const key = @import("../key.zig");
 const adw_version = @import("../adw_version.zig");
 const gtk_version = @import("../gtk_version.zig");
+const adw_css = @import("../adw_css.zig");
 const winprotopkg = @import("../winproto.zig");
 const ApprtApp = @import("../App.zig");
 const Common = @import("../class.zig").Common;
@@ -51,6 +52,11 @@ const Overrides = @import("Overrides.zig");
 const log = std.log.scoped(.gtk_ghostty_application);
 
 extern "c" fn setenv(name: ?[*]const u8, value: ?[*]const u8, overwrite: c_int) c_int;
+
+/// Set if we forced a GTK theme via `gtk-theme` at startup. This holds the
+/// original value of the `GTK_THEME` environment variable (if any) so that
+/// it can be restored for child processes.
+pub var forced_gtk_theme: ?struct { original: ?[:0]const u8 } = null;
 
 /// Function used to funnel GLib/GObject/GTK log messages into Zig's logging
 /// system rather than just getting dumped directly to stderr.
@@ -386,6 +392,13 @@ pub const Application = extern struct {
         // Wrap our configuration in a GObject.
         const config_obj: *Config = try .new(alloc, &config);
         errdefer config_obj.unref();
+
+        // libadwaita doesn't load its stylesheet when a GTK theme is forced
+        // (GTK_THEME), leaving its own widgets (dialogs, toasts, the tab
+        // overview...) unstyled with themes that aren't made for libadwaita.
+        // Load the part of its stylesheet for those widgets ourselves. See
+        // adw_css.zig.
+        if (forced_gtk_theme != null) loadAdwCss(alloc, display);
 
         // Internally, GTK ensures that only one instance of this provider
         // exists in the provider list for the display.
@@ -937,6 +950,51 @@ pub const Application = extern struct {
             });
         }
 
+        if (std.c.getenv("GTK_THEME") == null) {
+            // Without a forced GTK theme, libadwaita's colors are defined
+            // and we match the headerbar like Tilix does with its theme.
+            try writer.writeAll(
+                \\.split-titlebar {
+                \\  background-color: @headerbar_bg_color;
+                \\  color: @headerbar_fg_color;
+                \\}
+                \\
+            );
+        }
+
+        if (forced_gtk_theme != null) {
+            // libadwaita draws a circle behind the window control icons,
+            // which clashes with themes that draw the whole button
+            // (e.g. Breeze).
+            //
+            // Themes like Breeze style the generic "title" style class
+            // (used by libadwaita's window title) with a large font, while
+            // their own headerbar titles use the regular font size.
+            //
+            // Themes like Breeze give window control buttons large negative
+            // margins meant for full height titlebars, which pushes the
+            // close button of libadwaita dialogs out of view. Use
+            // libadwaita's spacing within dialogs.
+            try writer.writeAll(
+                \\windowcontrols > button > image {
+                \\  background: none;
+                \\  box-shadow: none;
+                \\}
+                \\
+                \\headerbar windowtitle .title {
+                \\  font-size: inherit;
+                \\}
+                \\
+                \\dialog-host > dialog windowcontrols > button {
+                \\  margin: 0;
+                \\  padding: 5px;
+                \\  min-width: 24px;
+                \\  min-height: 24px;
+                \\}
+                \\
+            );
+        }
+
         if (config.@"window-title-font-family") |font_family| {
             try writer.print(
                 \\.window headerbar {{
@@ -1012,7 +1070,7 @@ pub const Application = extern struct {
             \\.child-exited.normal revealer widget {
             \\  background-color: color-mix(
             \\    in srgb,
-            \\    var(--success-bg-color),
+            \\    var(--success-bg-color, #26a269),
             \\    transparent 50%
             \\  );
             \\}
@@ -1020,7 +1078,7 @@ pub const Application = extern struct {
             \\.child-exited.abnormal revealer widget {
             \\  background-color: color-mix(
             \\    in srgb,
-            \\    var(--error-bg-color),
+            \\    var(--error-bg-color, #c01c28),
             \\    transparent 50%
             \\  );
             \\}
@@ -1032,7 +1090,7 @@ pub const Application = extern struct {
             \\.surface progressbar.error trough progress {
             \\  background-color: color-mix(
             \\    in srgb,
-            \\    var(--error-bg-color),
+            \\    var(--error-bg-color, #c01c28),
             \\    transparent 50%
             \\  );
             \\}
@@ -1040,7 +1098,7 @@ pub const Application = extern struct {
             \\.surface .bell-overlay {
             \\  border-color: color-mix(
             \\    in srgb,
-            \\    var(--accent-color),
+            \\    var(--accent-color, #3584e4),
             \\    transparent 50%
             \\  );
             \\}
@@ -1052,29 +1110,37 @@ pub const Application = extern struct {
             \\  background: linear-gradient(
             \\    to left,
             \\    transparent, 50%,
-            \\    color-mix(in srgb, var(--accent-bg-color), transparent 80%) 50%
+            \\    color-mix(in srgb, var(--accent-bg-color, #3584e4), transparent 80%) 50%
             \\  );
             \\}
             \\.drop-overlay.drop-right {
             \\  background: linear-gradient(
             \\    to right,
             \\    transparent, 50%,
-            \\    color-mix(in srgb, var(--accent-bg-color), transparent 80%) 50%
+            \\    color-mix(in srgb, var(--accent-bg-color, #3584e4), transparent 80%) 50%
             \\  );
             \\}
             \\.drop-overlay.drop-top {
             \\  background: linear-gradient(
             \\    to top,
             \\    transparent, 50%,
-            \\    color-mix(in srgb, var(--accent-bg-color), transparent 80%) 50%
+            \\    color-mix(in srgb, var(--accent-bg-color, #3584e4), transparent 80%) 50%
             \\  );
             \\}
             \\.drop-overlay.drop-bottom {
             \\  background: linear-gradient(
             \\    to bottom,
             \\    transparent, 50%,
-            \\    color-mix(in srgb, var(--accent-bg-color), transparent 80%) 50%
+            \\    color-mix(in srgb, var(--accent-bg-color, #3584e4), transparent 80%) 50%
             \\  );
+            \\}
+            \\
+            \\/*
+            \\ * Split title bar
+            \\ */
+            \\
+            \\.split-titlebar {
+            \\  border-bottom-color: var(--headerbar-shade-color, alpha(currentColor, 0.15));
             \\}
             \\
             \\/*
@@ -1084,7 +1150,7 @@ pub const Application = extern struct {
             \\.window .split paned > separator {
             \\  background-color: color-mix(
             \\    in srgb,
-            \\    var(--window-bg-color),
+            \\    var(--window-bg-color, alpha(currentColor, 0.15)),
             \\    transparent 0%
             \\  );
             \\}
@@ -3278,6 +3344,77 @@ const Action = struct {
     }
 };
 
+/// Load the libadwaita-only parts of libadwaita's stylesheet. Only used
+/// when a GTK theme is forced, see `adw_css.zig`.
+fn loadAdwCss(alloc: Allocator, display: *gdk.Display) void {
+    const path = "/org/gnome/Adwaita/styles/gtk.css";
+    const bytes = gio.resourcesLookupData(path, .{}, null) orelse {
+        log.warn("libadwaita stylesheet not found path={s}", .{path});
+        return;
+    };
+    defer bytes.unref();
+
+    var len: usize = undefined;
+    const ptr = bytes.getData(&len) orelse return;
+    // Match the forced theme: a dark variant (e.g. "Breeze:dark") or a
+    // dark theme (e.g. "Breeze-Dark") gets libadwaita's dark style.
+    const theme = std.c.getenv("GTK_THEME") orelse return;
+    const filtered = adw_css.filter(alloc, ptr[0..len], .{
+        .dark = std.ascii.indexOfIgnoreCase(std.mem.span(theme), "dark") != null,
+    }) catch |err| {
+        log.warn("unable to filter libadwaita stylesheet err={}", .{err});
+        return;
+    };
+    defer alloc.free(filtered);
+
+    // libadwaita defines its accent colors in a separate stylesheet based
+    // on the system accent color, which we don't load. Without them the
+    // accent CSS variables are invalid, making e.g. the split drop overlay
+    // transparent.
+    var accent_buf: [32]u8 = undefined;
+    const accent: []const u8 = accent: {
+        if (comptime adw_version.atLeast(1, 6, 0)) {
+            if (adw_version.runtimeAtLeast(1, 6, 0)) {
+                const rgba = adw.StyleManager.getDefault().getAccentColorRgba();
+                defer rgba.free();
+                break :accent std.fmt.bufPrint(&accent_buf, "rgb({d},{d},{d})", .{
+                    @as(u8, @intFromFloat(@round(std.math.clamp(rgba.f_red, 0, 1) * 255))),
+                    @as(u8, @intFromFloat(@round(std.math.clamp(rgba.f_green, 0, 1) * 255))),
+                    @as(u8, @intFromFloat(@round(std.math.clamp(rgba.f_blue, 0, 1) * 255))),
+                }) catch "#3584e4";
+            }
+        }
+        break :accent "#3584e4";
+    };
+    const css = std.fmt.allocPrint(
+        alloc,
+        \\@define-color accent_bg_color {s};
+        \\@define-color accent_fg_color #ffffff;
+        \\{s}
+    ,
+        .{ accent, filtered },
+    ) catch |err| {
+        log.warn("unable to build libadwaita stylesheet err={}", .{err});
+        return;
+    };
+    defer alloc.free(css);
+
+    const filtered_bytes = glib.Bytes.new(css.ptr, css.len);
+    defer filtered_bytes.unref();
+
+    // This lives as long as the display, so we never unref it. It is above
+    // the theme (and settings) so that e.g. a theme resetting the padding
+    // of all widgets doesn't break libadwaita's widgets, which are all that
+    // these rules target. It's below our own application CSS.
+    const provider = gtk.CssProvider.new();
+    provider.loadFromBytes(filtered_bytes);
+    gtk.StyleContext.addProviderForDisplay(
+        display,
+        provider.as(gtk.StyleProvider),
+        gtk.STYLE_PROVIDER_PRIORITY_APPLICATION - 1,
+    );
+}
+
 /// This sets various GTK-related environment variables as necessary
 /// given the runtime environment or configuration.
 ///
@@ -3334,6 +3471,18 @@ fn setGtkEnv(config: *const CoreConfig) std.Io.Writer.Error!void {
         const value = writer.buffered();
         log.warn("setting GDK_DISABLE={s}", .{value[0 .. value.len - 1]});
         _ = setenv("GDK_DISABLE", @ptrCast(value[0 .. value.len - 1 :0]), 1);
+    }
+
+    if (config.@"gtk-theme") |theme| theme: {
+        // Remember the original value so we can restore it for child
+        // processes. We dupe it because setenv may invalidate it.
+        const original: ?[:0]const u8 = if (std.c.getenv("GTK_THEME")) |v|
+            std.heap.c_allocator.dupeZ(u8, std.mem.span(v)) catch break :theme
+        else
+            null;
+        log.info("setting GTK_THEME={s}", .{theme});
+        _ = setenv("GTK_THEME", theme.ptr, 1);
+        forced_gtk_theme = .{ .original = original };
     }
 
     // Sync environ after altering system env

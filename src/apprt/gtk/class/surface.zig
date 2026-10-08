@@ -24,7 +24,8 @@ const gsettings = @import("../gsettings.zig");
 const gtk_key = @import("../key.zig");
 const ApprtSurface = @import("../Surface.zig");
 const Common = @import("../class.zig").Common;
-const Application = @import("application.zig").Application;
+const application = @import("application.zig");
+const Application = application.Application;
 const Config = @import("config.zig").Config;
 const ResizeOverlay = @import("resize_overlay.zig").ResizeOverlay;
 const SearchOverlay = @import("search_overlay.zig").SearchOverlay;
@@ -1616,6 +1617,15 @@ pub const Surface = extern struct {
         _ = env.orderedRemove("GDK_DEBUG");
         _ = env.orderedRemove("GDK_DISABLE");
         _ = env.orderedRemove("GSK_RENDERER");
+
+        // If we forced a GTK theme, restore the original value.
+        if (application.forced_gtk_theme) |forced| {
+            if (forced.original) |v| {
+                try env.put("GTK_THEME", v);
+            } else {
+                _ = env.orderedRemove("GTK_THEME");
+            }
+        }
 
         // Remove some environment variables that are set when Ghostty is launched
         // from a `.desktop` file, by D-Bus activation, or systemd.
