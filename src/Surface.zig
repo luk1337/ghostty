@@ -345,6 +345,7 @@ const DerivedConfig = struct {
     vt_window_resize_allowed: bool,
     links: []DerivedConfig.Link,
     link_osc8: bool,
+    link_hover_highlight: bool,
     link_previews: configpkg.LinkPreviews,
     scroll_to_bottom: configpkg.Config.ScrollToBottom,
     notify_on_command_finish: configpkg.Config.NotifyOnCommandFinish,
@@ -356,6 +357,7 @@ const DerivedConfig = struct {
         regex: oni.Regex,
         action: input.Link.Action,
         highlight: input.Link.Highlight,
+        open_mods: ?input.Mods,
     };
 
     pub fn init(alloc_gpa: Allocator, config: *const configpkg.Config) !DerivedConfig {
@@ -374,6 +376,7 @@ const DerivedConfig = struct {
                     .regex = regex,
                     .action = link.action,
                     .highlight = link.highlight,
+                    .open_mods = link.open_mods,
                 });
             }
 
@@ -426,6 +429,7 @@ const DerivedConfig = struct {
             .vt_window_resize_allowed = config.@"vt-window-resize-allowed",
             .links = links,
             .link_osc8 = config.@"link-osc8",
+            .link_hover_highlight = config.@"link-hover-highlight",
             .link_previews = config.@"link-previews",
             .scroll_to_bottom = config.@"scroll-to-bottom",
             .notify_on_command_finish = config.@"notify-on-command-finish",
@@ -1681,7 +1685,7 @@ fn mouseRefreshLinks(
             }
         }
 
-        const link = (try self.linkAtPos(pos)) orelse break :link .{ null, false };
+        const link = (try self.linkAtPos(pos, .highlight)) orelse break :link .{ null, false };
         switch (link.action) {
             .open => {
                 const str = try self.io.terminal.screens.active.selectionString(alloc, .{
@@ -1736,6 +1740,11 @@ fn mouseRefreshLinks(
     // No link, if we're previously over a link then we need to clear
     // the over-link apprt state.
     if (over_link) {
+        // Mark the previously highlighted link as dirty so that its
+        // highlight is removed. Otherwise the underline remains until
+        // something else redraws that row.
+        self.renderer_state.terminal.screens.active.dirty.hyperlink_hover = true;
+
         _ = try self.rt_app.performAction(
             .{ .surface = self },
             .mouse_shape,
@@ -4148,6 +4157,7 @@ pub fn mouseButtonCallback(
                 if (self.linkAtPin(
                     pin,
                     null,
+                    .highlight,
                 )) |result_| {
                     if (result_) |result| {
                         press_selection = result.selection;
@@ -4231,7 +4241,7 @@ pub fn mouseButtonCallback(
 
                 // If there is a link at this position, we want to
                 // select the link. Otherwise, select the word.
-                if (try self.linkAtPos(pos)) |link| {
+                if (try self.linkAtPos(pos, .highlight)) |link| {
                     try self.setSelectionAndCopy(link.selection);
                 } else {
                     const sel = screen.selectWord(
@@ -4440,12 +4450,17 @@ const Link = struct {
     selection: terminal.Selection,
 };
 
+/// What a link lookup is for. Opening a link may require more mods than
+/// highlighting it (see `link-hover-highlight`).
+const LinkPurpose = enum { highlight, open };
+
 /// Returns the link at the given cursor position, if any.
 ///
 /// Requires the renderer mutex is held.
 fn linkAtPos(
     self: *Surface,
     pos: apprt.CursorPos,
+    purpose: LinkPurpose,
 ) !?Link {
     // Convert our cursor position to a screen point.
     const screen: *terminal.Screen = self.renderer_state.terminal.screens.active;
@@ -4462,9 +4477,11 @@ fn linkAtPos(
     const mouse_mods = self.mouseModsWithCapture(self.mouse.mods);
 
     // If we have the proper modifiers set then we can check for OSC8 links.
-    if (self.config.link_osc8 and
-        mouse_mods.equal(input.ctrlOrSuper(.{})))
-    hyperlink: {
+    // With link-hover-highlight, OSC8 links are highlighted without mods
+    // but opening them still requires the mods.
+    const osc8_mods_ok = mouse_mods.equal(input.ctrlOrSuper(.{})) or
+        (self.config.link_hover_highlight and purpose == .highlight);
+    if (self.config.link_osc8 and osc8_mods_ok) hyperlink: {
         const rac = mouse_pin.rowAndCell();
         const cell = rac.cell;
         if (!cell.hyperlink) break :hyperlink;
@@ -4473,7 +4490,7 @@ fn linkAtPos(
     }
 
     // Fall back to configured links
-    return try self.linkAtPin(mouse_pin, mouse_mods);
+    return try self.linkAtPin(mouse_pin, mouse_mods, purpose);
 }
 
 /// Detects if a link is present at the given pin.
@@ -4486,6 +4503,7 @@ fn linkAtPin(
     self: *Surface,
     mouse_pin: terminal.Pin,
     mouse_mods: ?input.Mods,
+    purpose: LinkPurpose,
 ) !?Link {
     if (self.config.links.len == 0) return null;
 
@@ -4506,10 +4524,16 @@ fn linkAtPin(
 
     for (self.config.links) |link| {
         // Skip highlight/mods check when mouse_mods is null (double-click mode)
-        if (mouse_mods) |mods| switch (link.highlight) {
-            .always, .hover => {},
-            .always_mods, .hover_mods => |v| if (!v.equal(mods)) continue,
-        };
+        if (mouse_mods) |mods| {
+            switch (link.highlight) {
+                .always, .hover => {},
+                .always_mods, .hover_mods => |v| if (!v.equal(mods)) continue,
+            }
+
+            if (purpose == .open) if (link.open_mods) |v| {
+                if (!v.equal(mods)) continue;
+            };
+        }
 
         var it = strmap.searchIterator(link.regex);
         while (true) {
@@ -4551,7 +4575,7 @@ fn mouseModsWithCapture(self: *Surface, mods: input.Mods) input.Mods {
 ///
 /// Requires the renderer state mutex is held.
 fn processLinks(self: *Surface, pos: apprt.CursorPos) !bool {
-    const link = try self.linkAtPos(pos) orelse return false;
+    const link = try self.linkAtPos(pos, .open) orelse return false;
     switch (link.action) {
         .open => {
             const str = try self.io.terminal.screens.active.selectionString(self.alloc, .{
@@ -5193,7 +5217,7 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
 
             self.renderer_state.mutex.lockUncancelable(global.io());
             defer self.renderer_state.mutex.unlock(global.io());
-            if (try self.linkAtPos(pos)) |link_info| {
+            if (try self.linkAtPos(pos, .highlight)) |link_info| {
                 const url_text = switch (link_info.action) {
                     .open => url_text: {
                         // For regex links, get the text from selection
