@@ -243,6 +243,8 @@ pub const SurfaceScrolledWindow = extern struct {
             binding.ref();
             priv.config_binding = binding;
 
+            self.syncMinSize();
+
             // Dim the title bar when the surface isn't focused.
             _ = gobject.Object.signals.notify.connect(
                 surface,
@@ -253,6 +255,19 @@ pub const SurfaceScrolledWindow = extern struct {
             );
             propSurfaceFocused(surface, undefined, self);
         }
+    }
+
+    /// Update our minimum size from our surface. The surface is inside a
+    /// scrolled window, which doesn't propagate the minimum size of its
+    /// child, so we apply it to the scrolled window ourselves. Together
+    /// with the split panes not allowing children to shrink below their
+    /// minimum size, this keeps splits from becoming smaller than a row
+    /// of text, like Tilix.
+    pub fn syncMinSize(self: *Self) void {
+        const priv = self.private();
+        const surface = priv.surface orelse return;
+        const size = surface.getSplitMinSize() orelse return;
+        priv.scrolled_window.as(gtk.Widget).setSizeRequest(size.width, size.height);
     }
 
     //---------------------------------------------------------------

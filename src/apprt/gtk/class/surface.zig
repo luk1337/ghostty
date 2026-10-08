@@ -36,6 +36,7 @@ const TitleDialog = @import("title_dialog.zig").TitleDialog;
 const Window = @import("window.zig").Window;
 const InspectorWindow = @import("inspector_window.zig").InspectorWindow;
 const SplitTree = @import("split_tree.zig").SplitTree;
+const SurfaceScrolledWindow = @import("surface_scrolled_window.zig").SurfaceScrolledWindow;
 const RenderSurface = @import("render_surface.zig").RenderSurface;
 const i18n = @import("../../../os/i18n.zig");
 const global = @import("../../../global.zig");
@@ -583,6 +584,9 @@ pub const Surface = extern struct {
         /// The minimum size for this surface. Embedders enforce this,
         /// not the surface itself.
         min_size: ?*Size = null,
+
+        /// The cell size in device pixels as reported by the core surface.
+        cell_size: ?apprt.action.CellSize = null,
 
         /// The requested font size. This only applies to initialization
         /// and has no effect later.
@@ -2249,6 +2253,42 @@ pub const Surface = extern struct {
         const priv = self.private();
         const alloc = Application.default().allocator();
         return ext.StringList.create(alloc, priv.key_tables.items) catch null;
+    }
+
+    /// Set the cell size (in device pixels) as reported by the core surface.
+    pub fn setCellSize(self: *Self, size: apprt.action.CellSize) void {
+        self.private().cell_size = size;
+
+        // The minimum size of our split depends on the cell size.
+        const window = ext.getAncestor(
+            SurfaceScrolledWindow,
+            self.as(gtk.Widget),
+        ) orelse return;
+        window.syncMinSize();
+    }
+
+    /// The minimum size of this surface within a split in logical pixels,
+    /// if known. Like Tilix (VTE), this is enough space to show two
+    /// columns and one row of text, plus padding.
+    pub fn getSplitMinSize(self: *Self) ?struct { width: c_int, height: c_int } {
+        const priv = self.private();
+        const cell = priv.cell_size orelse return null;
+        const config = if (priv.config) |c| c.get() else return null;
+
+        // The cell size is in device pixels while GTK sizes are logical.
+        const scale: u32 = @intCast(@max(1, self.as(gtk.Widget).getScaleFactor()));
+
+        // Padding is in points. 1pt is 4/3 logical pixels at 96 DPI which
+        // is close enough for a minimum size.
+        const pad_x = config.@"window-padding-x";
+        const pad_y = config.@"window-padding-y";
+        const pad_w = ((pad_x.top_left + pad_x.bottom_right) * 4 + 2) / 3;
+        const pad_h = ((pad_y.top_left + pad_y.bottom_right) * 4 + 2) / 3;
+
+        return .{
+            .width = @intCast((cell.width * 2 + scale - 1) / scale + pad_w),
+            .height = @intCast((cell.height + scale - 1) / scale + pad_h),
+        };
     }
 
     /// Return the min size, if set.
