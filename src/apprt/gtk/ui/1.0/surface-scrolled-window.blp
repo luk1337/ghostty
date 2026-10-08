@@ -16,6 +16,10 @@ template $GhostttySurfaceScrolledWindow: Adw.Bin {
       // and title, and can be dragged to rearrange or detach the split.
       Box titlebar {
         styles [
+          // The theme's window background, so that we're opaque even with
+          // themes that don't define libadwaita's colors. Otherwise e.g.
+          // tab overview thumbnails show their (white) backdrop through us.
+          "background",
           "split-titlebar",
         ]
 
@@ -43,9 +47,12 @@ template $GhostttySurfaceScrolledWindow: Adw.Bin {
 
         MenuButton title_button {
           styles [
-            "flat",
             "split-title",
           ]
+
+          // Not the "flat" style class: has-frame puts the flat class on
+          // the inner button, which non-libadwaita themes (GTK_THEME) need.
+          has-frame: false;
 
           hexpand: true;
           halign: start;
