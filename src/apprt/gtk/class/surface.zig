@@ -2133,6 +2133,21 @@ pub const Surface = extern struct {
         return self.private().mapped;
     }
 
+    /// Set whether this surface is the zoomed surface in its split tree.
+    pub fn setZoom(self: *Self, zoom: bool) void {
+        const priv = self.private();
+        if (priv.zoom == zoom) return;
+        priv.zoom = zoom;
+        self.as(gobject.Object).notifyByPspec(properties.zoom.impl.param_spec);
+    }
+
+    /// Returns the "surface" action group so that widgets outside of the
+    /// surface (e.g. the split title bar) can expose surface actions.
+    pub fn getActionGroup(self: *Self) ?*gio.ActionGroup {
+        const group = self.private().action_group orelse return null;
+        return group.as(gio.ActionGroup);
+    }
+
     /// Change the configuration for this surface.
     pub fn setConfig(self: *Self, config: *Config) void {
         const priv = self.private();
@@ -3625,12 +3640,27 @@ pub const Surface = extern struct {
     ) callconv(.c) c_int {
         const config = config_ orelse return @intFromBool(false);
 
+        // The split title bar doubles as a drag handle, so we never show
+        // both at the same time.
+        if (shouldSplitTitlebarBeShown(config, is_split != 0)) {
+            return @intFromBool(false);
+        }
+
         const shown = switch (config.get().@"drag-handle") {
             .always => true,
             .auto => is_split != 0,
             .never => false,
         };
         return @intFromBool(shown);
+    }
+
+    /// Returns true if the split title bar should be shown for a surface.
+    pub fn shouldSplitTitlebarBeShown(config: *Config, is_split: bool) bool {
+        return switch (config.get().@"gtk-split-titlebar") {
+            .always => true,
+            .auto => is_split,
+            .never => false,
+        };
     }
 
     fn surfaceDragPrepare(
@@ -3644,8 +3674,7 @@ pub const Surface = extern struct {
         _ = src;
         _ = x;
         _ = y;
-        var val = gobject.ext.Value.newFrom(self.core().?.id);
-        return gdk.ContentProvider.newForValue(&val);
+        return self.dragContentProvider();
     }
 
     fn surfaceDragBegin(
@@ -3653,6 +3682,45 @@ pub const Surface = extern struct {
         _: *gdk.Drag,
         self: *Self,
     ) callconv(.c) void {
+        self.setDragIcon(src);
+    }
+
+    fn surfaceDragCancel(
+        _: *gtk.DragSource,
+        _: *gdk.Drag,
+        reason: gdk.DragCancelReason,
+        self: *Self,
+    ) callconv(.c) c_int {
+        return @intFromBool(self.dragCancelled(reason));
+    }
+
+    /// Returns the content provider used to drag this surface around.
+    /// The payload is the surface ID which drop targets can resolve.
+    pub fn dragContentProvider(self: *Self) *gdk.ContentProvider {
+        var val = gobject.ext.Value.newFrom(self.core().?.id);
+        return gdk.ContentProvider.newForValue(&val);
+    }
+
+    /// Handle a cancelled drag of this surface. If the surface was dropped
+    /// outside of any Ghostty window then it is detached into a new window.
+    /// Returns true if the cancellation was handled.
+    pub fn dragCancelled(self: *Self, reason: gdk.DragCancelReason) bool {
+        switch (reason) {
+            // The user aborted the drag (e.g. pressed escape).
+            .user_cancelled => return false,
+
+            // X11 reports drops outside of any drop target as no_target,
+            // but Wayland reports every cancelled drag as an error since
+            // the protocol doesn't tell us why the drag was cancelled.
+            // Drops on our own windows are always accepted (see
+            // Window.surfaceDrop) so we only get here for drops elsewhere.
+            else => return Window.detachSurface(self),
+        }
+    }
+
+    /// Set the icon of a drag source to a scaled down preview of
+    /// this surface.
+    pub fn setDragIcon(self: *Self, src: *gtk.DragSource) void {
         // The scale of the preview
         const preview_scale: f32 = 0.2;
 
@@ -3700,27 +3768,34 @@ pub const Surface = extern struct {
         x: f64,
         y: f64,
         self: *Self,
-    ) callconv(.c) void {
+    ) callconv(.c) c_int {
+        // Clean up overlay state
+        self.setDropOverlayDirection(null);
+
         const dropped_id = v.getUint64();
-        const dropped = self.core().?.app.findSurfaceByID(dropped_id) orelse return;
+        const dropped = self.core().?.app.findSurfaceByID(dropped_id) orelse return 0;
         const from = dropped.rt_surface.gobj();
+
+        // Dropping a surface onto itself does nothing, but we still accept
+        // the drop. Otherwise the drag is cancelled as having no target
+        // which would detach the surface into a new window.
+        if (from == self) return 1;
 
         const st = ext.getAncestor(
             SplitTree,
             self.as(gtk.Widget),
         ) orelse {
             log.warn("surface is not placed in a split tree", .{});
-            return;
+            return 0;
         };
 
         const dir = self.calcDropDirection(x, y);
 
         // The only error that could happen here is an OOM,
         // and in that case we're already milliseconds away from crashing, so...
-        st.moveSplit(from, self, dir) catch return;
+        st.moveSplit(from, self, dir) catch return 0;
 
-        // Clean up overlay state
-        self.setDropOverlayDirection(null);
+        return 1;
     }
 
     fn surfaceDropLeave(
@@ -3737,27 +3812,34 @@ pub const Surface = extern struct {
         y: f64,
         self: *Self,
     ) callconv(.c) gdk.DragAction {
-        // Recalculate the drop region
-        const dir = self.calcDropDirection(x, y);
+        // Recalculate the drop region. If a surface is being dragged over
+        // itself we don't show an overlay since dropping does nothing.
+        const dir: ?Tree.Split.Direction = if (self.isDraggedSurface())
+            null
+        else
+            self.calcDropDirection(x, y);
         self.setDropOverlayDirection(dir);
         return .{ .move = true };
     }
 
     fn propDropValue(
-        tgt: *gtk.DropTarget,
+        _: *gtk.DropTarget,
         _: *gobject.ParamSpec,
         self: *Self,
     ) callconv(.c) void {
-        // Reject the drop if we're dropping a surface onto itself.
-        // Note that we cannot implement this via the `accept` signal,
-        // since the decision of whether to accept or deny a drop is dependent
-        // on the payload (i.e. the surface being dropped). This is
-        // well-documented in GTK docs.
+        // Hide the drop overlay if we're dragging a surface over itself.
+        // We purposely don't reject the drop: a rejected drop is reported
+        // to the drag source as having no target, which would detach the
+        // surface into a new window.
+        if (self.isDraggedSurface()) self.setDropOverlayDirection(null);
+    }
 
-        const core_surface = self.core() orelse return;
-        const value = tgt.getValue() orelse return;
-        const surface_id = value.getUint64();
-        if (core_surface.id == surface_id) tgt.reject();
+    /// Returns true if the surface currently being dragged over our drop
+    /// target is this surface.
+    fn isDraggedSurface(self: *Self) bool {
+        const core_surface = self.core() orelse return false;
+        const value = self.private().surface_drop_target.getValue() orelse return false;
+        return core_surface.id == value.getUint64();
     }
 
     fn setDropOverlayDirection(self: *Self, dir: ?Tree.Split.Direction) void {
@@ -3876,6 +3958,7 @@ pub const Surface = extern struct {
             class.bindTemplateCallback("should_drag_handle_be_shown", &closureShouldDragHandleBeShown);
             class.bindTemplateCallback("surface_drag_prepare", &surfaceDragPrepare);
             class.bindTemplateCallback("surface_drag_begin", &surfaceDragBegin);
+            class.bindTemplateCallback("surface_drag_cancel", &surfaceDragCancel);
             class.bindTemplateCallback("surface_drop", &surfaceDrop);
             class.bindTemplateCallback("surface_drop_leave", &surfaceDropLeave);
             class.bindTemplateCallback("surface_drop_motion", &surfaceDropMotion);

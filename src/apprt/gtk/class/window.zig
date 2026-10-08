@@ -350,6 +350,21 @@ pub const Window = extern struct {
         // Initialize our actions
         self.initActionMap();
 
+        // Accept surfaces (split title bars) dropped anywhere on the window
+        // that isn't handled by a surface, e.g. the tab bar. See surfaceDrop.
+        const surface_drop_target = gtk.DropTarget.new(
+            gobject.ext.types.uint64,
+            .{ .move = true },
+        );
+        _ = gtk.DropTarget.signals.drop.connect(
+            surface_drop_target,
+            *Self,
+            surfaceDrop,
+            self,
+            .{},
+        );
+        self.as(gtk.Widget).addController(surface_drop_target.as(gtk.EventController));
+
         // Start states based on config.
         if (config.maximize) self.as(gtk.Window).maximize();
         if (config.fullscreen != .false) self.as(gtk.Window).fullscreen();
@@ -442,7 +457,6 @@ pub const Window = extern struct {
         overrides: Overrides,
     ) *adw.TabPage {
         const priv: *Private = self.private();
-        const tab_view = priv.tab_view;
 
         // Create our new tab object
         const tab = Tab.new(
@@ -462,6 +476,15 @@ pub const Window = extern struct {
             }
             tab.setParentWithContext(p, context);
         }
+
+        return self.insertTab(tab);
+    }
+
+    /// Insert a tab at the position dictated by the
+    /// `window-new-tab-position` config and select it.
+    fn insertTab(self: *Self, tab: *Tab) *adw.TabPage {
+        const priv: *Private = self.private();
+        const tab_view = priv.tab_view;
 
         // Get the position that we should insert the new tab at.
         const config = if (priv.config) |v| v.get() else {
@@ -639,6 +662,83 @@ pub const Window = extern struct {
         );
         window.as(gtk.Window).present();
         return true;
+    }
+
+    /// Move an existing surface from its current split tree (in any
+    /// window) into a new tab in this window. Returns true if the
+    /// surface was moved.
+    pub fn attachSurface(self: *Self, surface: *Surface) bool {
+        const alloc = Application.default().allocator();
+
+        const source_widget = ext.getAncestor(
+            SplitTree,
+            surface.as(gtk.Widget),
+        ) orelse return false;
+        const source_tree = source_widget.getTree() orelse return false;
+        const handle = source_tree.locate(surface) orelse return false;
+
+        // Compute the source tree without the surface first so that we
+        // don't have to undo anything if we fail.
+        var new_source_tree = source_tree.remove(alloc, handle) catch |err| {
+            log.warn("unable to remove surface from tree: {}", .{err});
+            return false;
+        };
+        defer new_source_tree.deinit();
+
+        // The new tab references the surface so it stays alive when it is
+        // removed from its old tree below.
+        const tab = Tab.newForSurface(self.private().config, surface) catch |err| {
+            log.warn("unable to create tab for surface: {}", .{err});
+            return false;
+        };
+        _ = self.insertTab(tab);
+
+        // This may close the old tab (and window) if it becomes empty.
+        source_widget.setTree(&new_source_tree);
+        return true;
+    }
+
+    /// Detach a surface into a new window. This is deferred to an idle
+    /// callback since it is usually triggered from within a drag-and-drop
+    /// callback of a widget that may be destroyed by the move. Returns
+    /// false if the surface can't be detached, e.g. because it is
+    /// already the only surface in its window.
+    pub fn detachSurface(surface: *Surface) bool {
+        if (!canDetachSurface(surface)) return false;
+        _ = glib.idleAdd(detachSurfaceIdle, surface.ref());
+        return true;
+    }
+
+    fn canDetachSurface(surface: *Surface) bool {
+        const tree_widget = ext.getAncestor(
+            SplitTree,
+            surface.as(gtk.Widget),
+        ) orelse return false;
+        const tree = tree_widget.getTree() orelse return false;
+        if (tree.locate(surface) == null) return false;
+
+        // A surface that is the only one in its window is effectively
+        // already detached.
+        const window = ext.getAncestor(Self, surface.as(gtk.Widget)) orelse return false;
+        if (window.private().tab_view.getNPages() > 1) return true;
+        return tree_widget.getIsSplit();
+    }
+
+    fn detachSurfaceIdle(ud: ?*anyopaque) callconv(.c) c_int {
+        const surface: *Surface = @ptrCast(@alignCast(ud orelse return 0));
+        defer surface.unref();
+
+        // Things may have changed since we were scheduled.
+        if (!canDetachSurface(surface)) return 0;
+
+        const window = Self.new(Application.default(), .none);
+        if (!window.attachSurface(surface)) {
+            window.as(gtk.Window).destroy();
+            return 0;
+        }
+
+        window.as(gtk.Window).present();
+        return 0;
     }
 
     pub fn toggleTabOverview(self: *Self) void {
@@ -1817,6 +1917,25 @@ pub const Window = extern struct {
 
         // Get our tab view
         return win.private().tab_view;
+    }
+
+    /// Handles a surface (dragged by its split title bar or drag handle)
+    /// being dropped somewhere on this window not handled by a surface,
+    /// such as the tab bar. Surfaces from other windows are attached as
+    /// a new tab. Dropping a surface on its own window does nothing, but
+    /// we still accept the drop so the surface isn't detached.
+    fn surfaceDrop(
+        _: *gtk.DropTarget,
+        value: *const gobject.Value,
+        _: f64,
+        _: f64,
+        self: *Self,
+    ) callconv(.c) c_int {
+        const id = value.getUint64();
+        const core_surface = Application.default().core().findSurfaceByID(id) orelse return 0;
+        const surface = core_surface.rt_surface.gobj();
+        if (ext.getAncestor(Self, surface.as(gtk.Widget)) == self) return 1;
+        return @intFromBool(self.attachSurface(surface));
     }
 
     fn tabCloseRequest(

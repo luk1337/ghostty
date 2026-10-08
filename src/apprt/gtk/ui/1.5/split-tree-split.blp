@@ -6,6 +6,14 @@ template $GhosttySplitTreeSplit: Adw.Bin {
     "split",
   ]
 
+  GestureClick {
+    // This is on our parent widget in the capture phase so that we see
+    // presses on the divider before the paned claims them for dragging.
+    propagation-phase: capture;
+    button: 1;
+    pressed => $paned_pressed();
+  }
+
   // The double-nesting is required due to a GTK bug where you can't
   // bind the first child of a builder layout. If you do, you get a double
   // dispose. Easiest way to see that is simply remove this and see the

@@ -3,14 +3,159 @@ using Adw 1;
 
 template $GhostttySurfaceScrolledWindow: Adw.Bin {
   notify::surface => $notify_surface();
+
   // The double-nesting is required due to a GTK bug where you can't
   // bind the first child of a builder layout. If you do, you get a double
   // dispose. Easiest way to see that is simply remove this and see the
   // GTK critical errors (and sometimes crashes).
   Adw.Bin {
-    Gtk.ScrolledWindow scrolled_window {
-      hscrollbar-policy: never;
-      vscrollbar-policy: bind $scrollbar_policy(template.config) as <Gtk.PolicyType>;
+    Box {
+      orientation: vertical;
+
+      // A Tilix-style title bar for the split. It shows the split number
+      // and title, and can be dragged to rearrange or detach the split.
+      Box titlebar {
+        styles [
+          "split-titlebar",
+        ]
+
+        orientation: horizontal;
+        visible: bind $titlebar_visible(template.config, template.surface as <$GhosttySurface>.is-split) as <bool>;
+
+        GestureClick {
+          // Capture so we focus the surface before any button handles
+          // the click. This makes split actions target this surface.
+          propagation-phase: capture;
+          button: 0;
+          pressed => $titlebar_pressed();
+        }
+
+        DragSource {
+          // Capture so the drag can start from any of the buttons too.
+          // A drag only claims the event once the drag threshold is
+          // exceeded so normal clicks still reach the buttons.
+          propagation-phase: capture;
+          actions: move;
+          prepare => $titlebar_drag_prepare();
+          drag-begin => $titlebar_drag_begin();
+          drag-cancel => $titlebar_drag_cancel();
+        }
+
+        MenuButton title_button {
+          styles [
+            "flat",
+            "split-title",
+          ]
+
+          hexpand: true;
+          halign: start;
+          can-focus: false;
+          focus-on-click: false;
+          menu-model: titlebar_menu;
+          tooltip-text: bind template.surface as <$GhosttySurface>.pwd;
+
+          child: Box {
+            spacing: 6;
+
+            Label {
+              ellipsize: start;
+              label: bind $computed_title(
+                template.index,
+                template.surface as <$GhosttySurface>.title,
+                template.surface as <$GhosttySurface>.title-override
+                ) as <string>;
+            }
+
+            Image {
+              icon-name: "pan-down-symbolic";
+            }
+          };
+        }
+
+        Button {
+          styles [
+            "flat",
+          ]
+
+          can-focus: false;
+          focus-on-click: false;
+          icon-name: bind $zoom_icon(template.surface as <$GhosttySurface>.zoom) as <string>;
+          tooltip-text: bind $zoom_tooltip(template.surface as <$GhosttySurface>.zoom) as <string>;
+          clicked => $zoom_clicked();
+        }
+
+        Button {
+          styles [
+            "flat",
+          ]
+
+          can-focus: false;
+          focus-on-click: false;
+          icon-name: "window-close-symbolic";
+          tooltip-text: _("Close Split");
+          clicked => $close_clicked();
+        }
+      }
+
+      Gtk.ScrolledWindow scrolled_window {
+        vexpand: true;
+        hscrollbar-policy: never;
+        vscrollbar-policy: bind $scrollbar_policy(template.config) as <Gtk.PolicyType>;
+      }
+    }
+  }
+}
+
+menu titlebar_menu {
+  section {
+    item {
+      label: _("Change Title…");
+      action: "surface.prompt-title";
+    }
+  }
+
+  section {
+    item {
+      label: _("Split Right");
+      action: "split-tree.new-split";
+      target: "right";
+    }
+
+    item {
+      label: _("Split Down");
+      action: "split-tree.new-split";
+      target: "down";
+    }
+
+    item {
+      label: _("Split Left");
+      action: "split-tree.new-split";
+      target: "left";
+    }
+
+    item {
+      label: _("Split Up");
+      action: "split-tree.new-split";
+      target: "up";
+    }
+  }
+
+  section {
+    item {
+      label: _("Zoom Split");
+      action: "split-tree.zoom";
+    }
+
+    item {
+      label: _("Detach Split to New Window");
+      action: "split-tree.detach";
+    }
+  }
+
+  section {
+    item {
+      label: _("Close Split");
+      action: "split-tree.close-split";
     }
   }
 }

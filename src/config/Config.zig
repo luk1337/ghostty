@@ -3816,6 +3816,33 @@ else
 /// with keybinds.
 @"gtk-tabs-location": GtkTabsLocation = .top,
 
+/// Controls whether each split shows a title bar, similar to Tilix. The
+/// title bar shows the split number and title, a menu with split actions,
+/// and buttons to zoom and close the split.
+///
+/// The title bar can be dragged to rearrange splits. Dropping it on another
+/// split (in any window) moves the split there, dropping it on the tab bar
+/// or title bar of another window attaches it to that window as a new tab,
+/// and dropping it outside of any Ghostty window detaches it into a new
+/// window.
+///
+/// When the title bar is shown, the `drag-handle` is not shown. GTK only.
+///
+/// Valid values:
+///
+///  - `always` *(default)*
+///
+///    Always show the split title bar, even when there's only one split.
+///
+///  - `auto`
+///
+///    Only show the split title bar when there are two or more splits.
+///
+///  - `never`
+///
+///    Never show the split title bar.
+@"gtk-split-titlebar": GtkSplitTitlebar = .always,
+
 /// If this is `true`, the titlebar will be hidden when the window is maximized,
 /// and shown when the titlebar is unmaximized. GTK only.
 ///
@@ -9505,6 +9532,13 @@ pub const MacOSDockDropBehavior = enum {
 
 /// See window-show-tab-bar
 pub const WindowShowTabBar = enum {
+    always,
+    auto,
+    never,
+};
+
+/// See gtk-split-titlebar
+pub const GtkSplitTitlebar = enum {
     always,
     auto,
     never,

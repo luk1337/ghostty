@@ -197,6 +197,33 @@ label.resize-overlay {
 }
 
 /*
+ * Split title bar (Tilix style)
+ */
+.split-titlebar {
+  background-color: @headerbar_bg_color;
+  color: @headerbar_fg_color;
+  border-bottom: 1px solid @headerbar_shade_color;
+  font-size: 0.9em;
+}
+
+.split-titlebar.unfocused .split-title {
+  opacity: 0.55;
+}
+
+.split-titlebar button {
+  min-height: 24px;
+  min-width: 24px;
+  padding: 2px 6px;
+  border-radius: 0;
+}
+
+.split-titlebar button.split-title,
+.split-titlebar .split-title > button {
+  padding: 2px 6px;
+  font-weight: normal;
+}
+
+/*
  * Command Palette
  */
 .command-palette-search > image:first-child {
