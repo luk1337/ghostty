@@ -1136,14 +1136,6 @@ pub const Application = extern struct {
             \\}
             \\
             \\/*
-            \\ * Split title bar
-            \\ */
-            \\
-            \\.split-titlebar {
-            \\  border-bottom-color: var(--headerbar-shade-color, alpha(currentColor, 0.15));
-            \\}
-            \\
-            \\/*
             \\ * Splits
             \\ */
             \\
