@@ -313,6 +313,7 @@ const DerivedConfig = struct {
     clipboard_codepoint_map: configpkg.Config.RepeatableClipboardCodepointMap,
     copy_on_select: configpkg.CopyOnSelect,
     right_click_action: configpkg.RightClickAction,
+    right_click_select_word: bool,
     middle_click_action: configpkg.MiddleClickAction,
     confirm_close_surface: configpkg.ConfirmCloseSurface,
     cursor_click_to_move: bool,
@@ -397,6 +398,7 @@ const DerivedConfig = struct {
             .clipboard_codepoint_map = try config.@"clipboard-codepoint-map".clone(alloc),
             .copy_on_select = config.@"copy-on-select",
             .right_click_action = config.@"right-click-action",
+            .right_click_select_word = config.@"right-click-select-word",
             .middle_click_action = config.@"middle-click-action",
             .confirm_close_surface = config.@"confirm-close-surface",
             .cursor_click_to_move = config.@"cursor-click-to-move",
@@ -4191,6 +4193,9 @@ pub fn mouseButtonCallback(
         switch (self.config.right_click_action) {
             .ignore => {},
             .@"context-menu" => {
+                // Leave the selection alone if configured to.
+                if (!self.config.right_click_select_word) return false;
+
                 // If we already have a selection and the selection contains
                 // where we clicked then we don't want to modify the selection.
                 if (self.io.terminal.screens.active.selection) |prev_sel| {
