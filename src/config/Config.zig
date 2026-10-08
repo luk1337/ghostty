@@ -2565,6 +2565,12 @@ keybind: Keybinds = .{},
 /// The default value is `context-menu`.
 @"right-click-action": RightClickAction = .@"context-menu",
 
+/// When `right-click-action` is `context-menu`, select the word (or link)
+/// under the mouse when right-clicking outside of the current selection, so
+/// that context menu actions such as copy apply to it. When false, right
+/// clicking leaves the selection unchanged, like most Linux terminals.
+@"right-click-select-word": bool = true,
+
 /// The action to take when the user middle-clicks on the terminal surface.
 ///
 /// Valid values:
