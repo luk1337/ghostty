@@ -806,6 +806,73 @@ pub fn SplitTree(comptime V: type) type {
             };
         }
 
+        /// Equalize only the splits that share the layout of the split
+        /// at `at` and are contiguous with it, i.e. the chain of splits of
+        /// the same orientation that `at` is part of. This is useful for
+        /// equalizing a single row or column of splits.
+        ///
+        /// `at` must be a split node.
+        pub fn equalizeAt(
+            self: *const Self,
+            gpa: Allocator,
+            at: Node.Handle,
+        ) Allocator.Error!Self {
+            assert(self.nodes[at.idx()] == .split);
+            const layout = self.nodes[at.idx()].split.layout;
+
+            // Walk up to the outermost split of the chain.
+            var root = at;
+            while (self.parent(root)) |p| {
+                if (self.nodes[p.idx()].split.layout != layout) break;
+                root = p;
+            }
+
+            var arena = ArenaAllocator.init(gpa);
+            errdefer arena.deinit();
+            const alloc = arena.allocator();
+            const nodes = try alloc.dupe(Node, self.nodes);
+            self.equalizeChain(nodes, root, layout);
+            try refNodes(gpa, nodes);
+
+            return .{
+                .arena = arena,
+                .nodes = nodes,
+                .zoomed = self.zoomed,
+            };
+        }
+
+        fn equalizeChain(
+            self: *const Self,
+            nodes: []Node,
+            current: Node.Handle,
+            layout: Split.Layout,
+        ) void {
+            switch (nodes[current.idx()]) {
+                .leaf => {},
+                .split => |*s| {
+                    if (s.layout != layout) return;
+                    const weight_left = self.weight(s.left, s.layout, 0);
+                    const weight_right = self.weight(s.right, s.layout, 0);
+                    const total_f16: f16 = @floatFromInt(weight_left + weight_right);
+                    const weight_left_f16: f16 = @floatFromInt(weight_left);
+                    s.ratio = weight_left_f16 / total_f16;
+                    self.equalizeChain(nodes, s.left, layout);
+                    self.equalizeChain(nodes, s.right, layout);
+                },
+            }
+        }
+
+        /// Returns the parent split of the given node, if any.
+        fn parent(self: *const Self, child: Node.Handle) ?Node.Handle {
+            for (self.nodes, 0..) |node, i| switch (node) {
+                .leaf => {},
+                .split => |s| if (s.left == child or s.right == child) {
+                    return @enumFromInt(i);
+                },
+            };
+            return null;
+        }
+
         fn weight(
             self: *const Self,
             from: Node.Handle,
@@ -2098,6 +2165,75 @@ test "SplitTree: spatial goto" {
             \\
         );
     }
+}
+
+test "SplitTree: equalizeAt" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var v1: TestTree.View = .{ .label = "A" };
+    var t1: TestTree = try .init(alloc, &v1);
+    defer t1.deinit();
+    var v2: TestTree.View = .{ .label = "B" };
+    var t2: TestTree = try .init(alloc, &v2);
+    defer t2.deinit();
+    var v3: TestTree.View = .{ .label = "C" };
+    var t3: TestTree = try .init(alloc, &v3);
+    defer t3.deinit();
+    var v4: TestTree.View = .{ .label = "D" };
+    var t4: TestTree = try .init(alloc, &v4);
+    defer t4.deinit();
+
+    const find = struct {
+        fn find(t: *const TestTree, label: []const u8) !TestTree.Node.Handle {
+            var it = t.iterator();
+            while (it.next()) |entry| {
+                if (std.mem.eql(u8, entry.view.label, label)) return entry.handle;
+            }
+            return error.NotFound;
+        }
+    }.find;
+
+    // A | B, then split B down into B / C, then split C right into C | D.
+    var s1 = try t1.split(alloc, .root, .right, 0.5, &t2);
+    defer s1.deinit();
+    var s2 = try s1.split(alloc, try find(&s1, "B"), .down, 0.5, &t3);
+    defer s2.deinit();
+    var s3 = try s2.split(alloc, try find(&s2, "C"), .right, 0.5, &t4);
+    defer s3.deinit();
+
+    // Find the horizontal split containing C and D.
+    const cd: TestTree.Node.Handle = handle: {
+        for (s3.nodes, 0..) |node, i| switch (node) {
+            .leaf => {},
+            .split => |s| if (s3.nodes[s.left.idx()] == .leaf and
+                s3.nodes[s.right.idx()] == .leaf and
+                s.layout == .horizontal)
+            {
+                break :handle @enumFromInt(i);
+            },
+        };
+        return error.NotFound;
+    };
+
+    // Make all ratios lopsided.
+    for (s3.nodes, 0..) |node, i| if (node == .split) {
+        s3.resizeInPlace(@enumFromInt(i), 0.25);
+    };
+
+    // Equalizing at C|D only affects that split since its parent is
+    // vertical, so the root (A | ...) keeps its ratio.
+    var eq = try s3.equalizeAt(alloc, cd);
+    defer eq.deinit();
+    try testing.expectEqual(@as(f16, 0.5), eq.nodes[cd.idx()].split.ratio);
+    try testing.expectEqual(@as(f16, 0.25), eq.nodes[0].split.ratio);
+
+    // Equalizing at the root only affects the root since its only
+    // child split is vertical.
+    var eq2 = try s3.equalizeAt(alloc, .root);
+    defer eq2.deinit();
+    try testing.expectEqual(@as(f16, 0.5), eq2.nodes[0].split.ratio);
+    try testing.expectEqual(@as(f16, 0.25), eq2.nodes[cd.idx()].split.ratio);
 }
 
 test "SplitTree: resize" {

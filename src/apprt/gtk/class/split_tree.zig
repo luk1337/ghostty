@@ -18,6 +18,7 @@ const CloseConfirmationDialog = @import("close_confirmation_dialog.zig").CloseCo
 const Surface = @import("surface.zig").Surface;
 const SurfaceScrolledWindow = @import("surface_scrolled_window.zig").SurfaceScrolledWindow;
 const Overrides = @import("Overrides.zig");
+const Window = @import("window.zig").Window;
 
 const log = std.log.scoped(.gtk_ghostty_split_tree);
 
@@ -195,6 +196,7 @@ pub const SplitTree = extern struct {
             .init("equalize", actionEqualize, null),
             .init("zoom", actionZoom, null),
             .init("close-split", actionCloseSplit, null),
+            .init("detach", actionDetach, null),
         };
 
         _ = ext.actions.addAsGroup(Self, self, "split-tree", &actions);
@@ -274,6 +276,35 @@ pub const SplitTree = extern struct {
 
         // Replace our tree
         self.setTree(&new_tree);
+    }
+
+    /// Replace this tree with a tree containing only the given existing
+    /// surface. This is used to move a surface from another split tree
+    /// into this one. The caller is responsible for removing the surface
+    /// from its previous tree.
+    pub fn setSingleSurface(self: *Self, surface: *Surface) Allocator.Error!void {
+        var tree = try Surface.Tree.init(
+            Application.default().allocator(),
+            surface,
+        );
+        defer tree.deinit();
+
+        self.private().last_focused.set(surface);
+        self.setTree(&tree);
+        surface.bindIsSplit(self);
+    }
+
+    /// Make the given surface the active surface of this tree and
+    /// move keyboard focus to it.
+    pub fn focusSurface(self: *Self, surface: *Surface) void {
+        const tree = self.getTree() orelse return;
+        if (tree.locate(surface) == null) return;
+
+        // We set last_focused first since focus events may not arrive
+        // if our window isn't active.
+        self.private().last_focused.set(surface);
+        surface.grabFocus();
+        self.as(gobject.Object).notifyByPspec(properties.@"active-surface".impl.param_spec);
     }
 
     pub fn resize(
@@ -413,6 +444,9 @@ pub const SplitTree = extern struct {
             &branch,
         );
         defer after_split.deinit();
+
+        // The moved surface should be focused once the tree is rebuilt.
+        self.private().last_focused.set(source);
 
         if (source_handle) |handle| {
             // Happy path: source and target are located within the same tree.
@@ -729,6 +763,24 @@ pub const SplitTree = extern struct {
         self.setTree(&new_tree);
     }
 
+    /// Evenly distribute the splits of the same orientation that the split
+    /// at the given handle is part of, like Tilix does when double clicking
+    /// a divider.
+    pub fn equalizeAt(self: *Self, handle: Surface.Tree.Node.Handle) void {
+        const old_tree = self.getTree() orelse return;
+        if (handle.idx() >= old_tree.nodes.len) return;
+        if (old_tree.nodes[handle.idx()] != .split) return;
+        var new_tree = old_tree.equalizeAt(
+            Application.default().allocator(),
+            handle,
+        ) catch |err| {
+            log.warn("unable to equalize tree: {}", .{err});
+            return;
+        };
+        defer new_tree.deinit();
+        self.setTree(&new_tree);
+    }
+
     pub fn actionZoom(
         _: *gio.SimpleAction,
         _: ?*glib.Variant,
@@ -753,6 +805,15 @@ pub const SplitTree = extern struct {
     ) callconv(.c) void {
         const surface = self.getActiveSurface() orelse return;
         surface.close();
+    }
+
+    pub fn actionDetach(
+        _: *gio.SimpleAction,
+        _: ?*glib.Variant,
+        self: *Self,
+    ) callconv(.c) void {
+        const surface = self.getActiveSurface() orelse return;
+        _ = Window.detachSurface(surface);
     }
 
     fn surfaceCloseRequest(
@@ -922,6 +983,11 @@ pub const SplitTree = extern struct {
 
         // Rebuild our tree
         const tree: *const Surface.Tree = self.private().tree orelse &.empty;
+
+        // Keep the zoom state of our surfaces in sync with the tree.
+        var it = tree.iterator();
+        while (it.next()) |entry| entry.view.setZoom(tree.zoomed == entry.handle);
+
         if (tree.isEmpty()) {
             priv.tree_bin.setChild(null);
         } else {
@@ -1011,6 +1077,10 @@ pub const SplitTree = extern struct {
     ) BuildTreeResult {
         return switch (tree.nodes[current.idx()]) {
             .leaf => |v| leaf: {
+                // The 1-based position of this surface in the tree, shown
+                // in the split title bar.
+                const index = leafIndex(tree, current);
+
                 const window = ext.getAncestor(
                     SurfaceScrolledWindow,
                     v.as(gtk.Widget),
@@ -1019,9 +1089,10 @@ pub const SplitTree = extern struct {
                     // have to worry about reuse.
                     break :leaf .initNew(gobject.ext.newInstance(
                         SurfaceScrolledWindow,
-                        .{ .surface = v },
+                        .{ .surface = v, .index = index },
                     ).as(gtk.Widget));
                 };
+                window.setIndex(index);
 
                 // Keep this widget alive while we detach it from the
                 // old tree and adopt it into the new one.
@@ -1041,6 +1112,35 @@ pub const SplitTree = extern struct {
                 ).as(gtk.Widget));
             },
         };
+    }
+
+    /// Returns the 1-based position of the given leaf in a left-to-right
+    /// (top-to-bottom) traversal of the tree.
+    fn leafIndex(
+        tree: *const Surface.Tree,
+        target: Surface.Tree.Node.Handle,
+    ) c_uint {
+        const Search = struct {
+            fn find(
+                t: *const Surface.Tree,
+                current: Surface.Tree.Node.Handle,
+                needle: Surface.Tree.Node.Handle,
+                count: *c_uint,
+            ) bool {
+                switch (t.nodes[current.idx()]) {
+                    .leaf => {
+                        count.* += 1;
+                        return current == needle;
+                    },
+                    .split => |s| return find(t, s.left, needle, count) or
+                        find(t, s.right, needle, count),
+                }
+            }
+        };
+
+        var count: c_uint = 0;
+        _ = Search.find(tree, .root, target, &count);
+        return count;
     }
 
     /// Detach a split widget from its current parent.
@@ -1181,6 +1281,10 @@ const SplitTreeSplit = extern struct {
         /// manually moving the split divider. See the "onIdle" function.
         max_changed: bool = false,
         pos_changed: bool = false,
+
+        /// The time of the last press on the divider, used to detect
+        /// double clicks. See panedPressed.
+        last_divider_press: u32 = 0,
 
         // Template bindings
         paned: *gtk.Paned,
@@ -1379,6 +1483,46 @@ const SplitTreeSplit = extern struct {
     //---------------------------------------------------------------
     // Signal handlers
 
+    fn panedPressed(
+        gesture: *gtk.GestureClick,
+        n_press: c_int,
+        x: f64,
+        y: f64,
+        self: *Self,
+    ) callconv(.c) void {
+        _ = n_press;
+        const priv = self.private();
+
+        // Only handle presses on our own divider, not on the dividers
+        // of nested splits or on the surfaces.
+        const paned = priv.paned.as(gtk.Widget);
+        const picked = self.as(gtk.Widget).pick(x, y, .{}) orelse return;
+        if (picked.getParent() != paned) return;
+        if (!std.mem.eql(u8, std.mem.span(picked.getCssName()), "separator")) return;
+
+        // We detect double clicks ourselves rather than using n_press
+        // because the paned claims every press on the divider to start
+        // dragging, which resets the click count of our gesture.
+        const time = gesture.as(gtk.EventController).getCurrentEventTime();
+        const last = priv.last_divider_press;
+        priv.last_divider_press = time;
+        const double_click_time: u32 = double_click_time: {
+            const settings = gtk.Settings.getDefault() orelse break :double_click_time 400;
+            var val = gobject.ext.Value.new(c_int);
+            defer val.unset();
+            settings.as(gobject.Object).getProperty("gtk-double-click-time", &val);
+            break :double_click_time @intCast(@max(0, gobject.ext.Value.get(&val, c_int)));
+        };
+        if (last == 0 or time -% last > double_click_time) return;
+        priv.last_divider_press = 0;
+
+        const split_tree = ext.getAncestor(
+            SplitTree,
+            self.as(gtk.Widget),
+        ) orelse return;
+        split_tree.equalizeAt(self.private().handle);
+    }
+
     fn propMaxPosition(
         _: *gtk.Paned,
         _: *gobject.ParamSpec,
@@ -1497,6 +1641,7 @@ const SplitTreeSplit = extern struct {
             // Template Callbacks
             class.bindTemplateCallback("notify_max_position", &propMaxPosition);
             class.bindTemplateCallback("notify_position", &propPosition);
+            class.bindTemplateCallback("paned_pressed", &panedPressed);
 
             // Virtual methods
             gobject.Object.virtual_methods.dispose.implement(class, &dispose);
