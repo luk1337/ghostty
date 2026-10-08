@@ -307,6 +307,25 @@ IMMulticontext im_context {
 }
 
 menu context_menu_model {
+  // Quick split buttons shown as a row of icons, like Tilix.
+  section {
+    display-hint: "horizontal-buttons";
+
+    item {
+      label: _("Split Right");
+      verb-icon: "ghostty-split-right-symbolic";
+      action: "split-tree.new-split";
+      target: "right";
+    }
+
+    item {
+      label: _("Split Down");
+      verb-icon: "ghostty-split-down-symbolic";
+      action: "split-tree.new-split";
+      target: "down";
+    }
+  }
+
   section {
     item {
       label: _("Copy");
