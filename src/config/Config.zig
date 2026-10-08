@@ -3895,6 +3895,20 @@ else
 /// Available since 1.4.0.
 @"gtk-horizontal-tab-scroll": bool = true,
 
+/// Force a GTK theme for Ghostty, e.g. `Breeze-Dark` or `Breeze:dark`. This
+/// is equivalent to launching Ghostty with the `GTK_THEME` environment
+/// variable set, except that programs running inside Ghostty don't inherit
+/// it. The value uses the same format as `GTK_THEME`: a theme name,
+/// optionally followed by `:dark`.
+///
+/// Ghostty uses libadwaita which normally ignores the system GTK theme.
+/// Forcing a theme that isn't designed for libadwaita mostly works, but
+/// some elements may not be styled as expected. Ghostty applies some fixes
+/// for common issues when this is set.
+///
+/// Changing this requires restarting Ghostty. GTK only.
+@"gtk-theme": ?[:0]const u8 = null,
+
 /// Custom CSS files to be loaded.
 ///
 /// GTK CSS documentation can be found at the following links:
