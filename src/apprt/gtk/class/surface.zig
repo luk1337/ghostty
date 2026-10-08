@@ -2342,6 +2342,18 @@ pub const Surface = extern struct {
         }
     }
 
+    /// Returns true if the search overlay is active.
+    pub fn getSearchActive(self: *Self) bool {
+        var value = gobject.ext.Value.new(bool);
+        defer value.unset();
+        gobject.Object.getProperty(
+            self.private().search_overlay.as(gobject.Object),
+            SearchOverlay.properties.active.name,
+            &value,
+        );
+        return gobject.ext.Value.get(&value, bool);
+    }
+
     pub fn setSearchTotal(self: *Self, total: ?usize) void {
         self.private().search_overlay.setSearchTotal(total);
     }

@@ -55,6 +55,7 @@ template $GhosttyWindow: Adw.ApplicationWindow {
 
         [start]
         Adw.SplitButton {
+          visible: bind $titlebar_style_is_not_tilix(template.titlebar-style) as <bool>;
           clicked => $new_tab();
           icon-name: "tab-new-symbolic";
           tooltip-text: _("New Tab");
@@ -64,8 +65,101 @@ template $GhosttyWindow: Adw.ApplicationWindow {
           focus-on-click: false;
         }
 
+        // The tilix titlebar style: a tab switcher, new tab, split right
+        // and split down on the start; search and the main menu on the end.
+        [start]
+        Gtk.Box {
+          styles [
+            "linked",
+          ]
+
+          visible: bind $titlebar_style_is_tilix(template.titlebar-style) as <bool>;
+
+          Gtk.ToggleButton {
+            styles [
+              "tab-switcher",
+            ]
+
+            tooltip-text: _("View Open Tabs");
+            active: bind tab_overview.open bidirectional;
+            can-focus: false;
+            focus-on-click: false;
+
+            child: Gtk.Box {
+              spacing: 6;
+
+              Gtk.Label tab_switcher_label {
+                label: bind $tab_switcher_label(tab_view.selected-page, tab_view.n-pages) as <string>;
+              }
+
+              Gtk.Image {
+                icon-name: "pan-down-symbolic";
+              }
+            };
+
+            Gtk.EventControllerScroll {
+              flags: vertical | discrete;
+              scroll => $tab_switcher_scroll();
+            }
+          }
+
+          Gtk.Button {
+            styles [
+              "tab-switcher-new",
+            ]
+
+            clicked => $new_tab();
+            icon-name: "list-add-symbolic";
+            tooltip-text: _("New Tab");
+            can-focus: false;
+            focus-on-click: false;
+          }
+        }
+
+        [start]
+        Gtk.Button {
+          visible: bind $titlebar_style_is_tilix(template.titlebar-style) as <bool>;
+          action-name: "win.split-right";
+          icon-name: "ghostty-split-right-symbolic";
+          tooltip-text: _("Split Right");
+          can-focus: false;
+          focus-on-click: false;
+        }
+
+        [start]
+        Gtk.Button {
+          visible: bind $titlebar_style_is_tilix(template.titlebar-style) as <bool>;
+          action-name: "win.split-down";
+          icon-name: "ghostty-split-down-symbolic";
+          tooltip-text: _("Split Down");
+          can-focus: false;
+          focus-on-click: false;
+        }
+
+        [end]
+        Gtk.MenuButton {
+          visible: bind $titlebar_style_is_tilix(template.titlebar-style) as <bool>;
+          notify::active => $notify_menu_active();
+          icon-name: "open-menu-symbolic";
+          menu-model: main_menu;
+          tooltip-text: _("Main Menu");
+          can-focus: false;
+        }
+
+        [end]
+        Gtk.Button {
+          visible: bind $titlebar_style_is_tilix(template.titlebar-style) as <bool>;
+          action-name: "win.toggle-search";
+          icon-name: "edit-find-symbolic";
+          tooltip-text: _("Find");
+          can-focus: false;
+          focus-on-click: false;
+        }
+
         [end]
         Gtk.Box {
+          visible: bind $titlebar_style_is_not_tilix(template.titlebar-style) as <bool>;
+
           Gtk.ToggleButton {
             icon-name: "view-grid-symbolic";
             tooltip-text: _("View Open Tabs");
@@ -165,6 +259,7 @@ template $GhosttyWindow: Adw.ApplicationWindow {
             page-attached => $page_attached();
             page-detached => $page_detached();
             create-window => $tab_create_window();
+            page-reordered => $page_reordered();
             setup-menu => $setup_tab_menu();
             menu-model: tab_context_menu;
             shortcuts: none;

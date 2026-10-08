@@ -285,6 +285,7 @@ pub const Window = extern struct {
         tab_overview: *adw.TabOverview,
         tab_bar: *adw.TabBar,
         tab_view: *adw.TabView,
+        tab_switcher_label: *gtk.Label,
         toolbar: *adw.ToolbarView,
         toast_overlay: *adw.ToastOverlay,
 
@@ -415,6 +416,7 @@ pub const Window = extern struct {
             // TODO: accept the surface that toggled the command palette
             .init("toggle-command-palette", actionToggleCommandPalette, null),
             .init("toggle-inspector", actionToggleInspector, null),
+            .init("toggle-search", actionToggleSearch, null),
         };
 
         ext.actions.add(Self, self, &actions);
@@ -1210,7 +1212,7 @@ pub const Window = extern struct {
 
             // If the titlebar style is native show the titlebar if configured
             // to do so.
-            .native => config.@"gtk-titlebar",
+            .native, .tilix => config.@"gtk-titlebar",
         };
     }
 
@@ -1221,6 +1223,9 @@ pub const Window = extern struct {
         return switch (config.@"gtk-titlebar-style") {
             // If the titlebar style is tabs we cannot autohide.
             .tabs => false,
+
+            // The tilix style never shows the tab bar, see getTabsVisible.
+            .tilix => true,
 
             .native => switch (config.@"window-show-tab-bar") {
                 // Auto we always autohide... obviously.
@@ -1249,6 +1254,10 @@ pub const Window = extern struct {
                 // If the titlebar style is tabs the tab bar must always be visible.
                 return true;
             },
+            // The tilix style replaces the tab bar with a tab switcher
+            // button in the titlebar.
+            .tilix => return false,
+
             .native => {
                 return switch (config.@"window-show-tab-bar") {
                     .always, .auto => true,
@@ -1460,9 +1469,72 @@ pub const Window = extern struct {
         value: TitlebarStyle,
     ) callconv(.c) c_int {
         return @intFromBool(switch (value) {
-            .native => false,
+            .native, .tilix => false,
             .tabs => true,
         });
+    }
+
+    fn closureTitlebarStyleIsTilix(
+        _: *Self,
+        value: TitlebarStyle,
+    ) callconv(.c) c_int {
+        return @intFromBool(value == .tilix);
+    }
+
+    fn closureTitlebarStyleIsNotTilix(
+        _: *Self,
+        value: TitlebarStyle,
+    ) callconv(.c) c_int {
+        return @intFromBool(value != .tilix);
+    }
+
+    /// The label of the tab switcher button of the tilix titlebar style,
+    /// e.g. "2 / 3" for the second of three tabs.
+    fn closureTabSwitcherLabel(
+        self: *Self,
+        selected_: ?*adw.TabPage,
+        n_pages: c_int,
+    ) callconv(.c) ?[*:0]const u8 {
+        const current: c_int = if (selected_) |selected|
+            self.private().tab_view.getPagePosition(selected) + 1
+        else
+            0;
+        var buf: [64]u8 = undefined;
+        const str = std.fmt.bufPrintSentinel(
+            &buf,
+            "{d} / {d}",
+            .{ current, n_pages },
+            0,
+        ) catch return null;
+        return glib.ext.dupeZ(u8, str);
+    }
+
+    /// Scrolling on the tab switcher button switches tabs, like Tilix.
+    fn tabSwitcherScroll(
+        _: *gtk.EventControllerScroll,
+        _: f64,
+        dy: f64,
+        self: *Self,
+    ) callconv(.c) c_int {
+        if (dy == 0) return 0;
+        _ = self.selectTab(if (dy < 0) .previous else .next);
+        return 1;
+    }
+
+    fn tabViewPageReordered(
+        _: *adw.TabView,
+        _: *adw.TabPage,
+        _: c_int,
+        self: *Self,
+    ) callconv(.c) void {
+        // The tab switcher label depends on the position of the selected
+        // page, which isn't a property we can bind to, so refresh it.
+        const priv = self.private();
+        priv.tab_switcher_label.setLabel(closureTabSwitcherLabel(
+            self,
+            priv.tab_view.getSelectedPage(),
+            priv.tab_view.getNPages(),
+        ) orelse return);
     }
 
     pub fn setTitleOverride(self: *Self, title: ?[]const u8) void {
@@ -2260,6 +2332,18 @@ pub const Window = extern struct {
         self.performBindingAction(.{ .new_split = .right });
     }
 
+    fn actionToggleSearch(
+        _: *gio.SimpleAction,
+        _: ?*glib.Variant,
+        self: *Window,
+    ) callconv(.c) void {
+        const surface = self.getActiveSurface() orelse return;
+        self.performBindingAction(if (surface.getSearchActive())
+            .end_search
+        else
+            .start_search);
+    }
+
     fn actionSplitLeft(
         _: *gio.SimpleAction,
         _: ?*glib.Variant,
@@ -2466,12 +2550,18 @@ pub const Window = extern struct {
             class.bindTemplateChildPrivate("tab_overview", .{});
             class.bindTemplateChildPrivate("tab_bar", .{});
             class.bindTemplateChildPrivate("tab_view", .{});
+            class.bindTemplateChildPrivate("tab_switcher_label", .{});
             class.bindTemplateChildPrivate("toolbar", .{});
             class.bindTemplateChildPrivate("toast_overlay", .{});
 
             // Template Callbacks
             class.bindTemplateCallback("realize", &windowRealize);
             class.bindTemplateCallback("new_tab", &btnNewTab);
+            class.bindTemplateCallback("titlebar_style_is_tilix", &closureTitlebarStyleIsTilix);
+            class.bindTemplateCallback("titlebar_style_is_not_tilix", &closureTitlebarStyleIsNotTilix);
+            class.bindTemplateCallback("tab_switcher_label", &closureTabSwitcherLabel);
+            class.bindTemplateCallback("tab_switcher_scroll", &tabSwitcherScroll);
+            class.bindTemplateCallback("page_reordered", &tabViewPageReordered);
             class.bindTemplateCallback("overview_create_tab", &tabOverviewCreateTab);
             class.bindTemplateCallback("overview_notify_open", &tabOverviewOpen);
             class.bindTemplateCallback("close_request", &windowCloseRequest);

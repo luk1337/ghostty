@@ -3871,6 +3871,13 @@ else
 /// by the titles any longer (as they are tab titles now). Other areas of the
 /// `tabs` title bar can be used to drag the window around.
 ///
+/// The `tilix` titlebar mimics the Tilix terminal emulator. There is no tab
+/// bar. Instead the titlebar has a tab switcher button showing the current
+/// and total number of tabs (click it to view all tabs, scroll on it to
+/// switch tabs), a new tab button, buttons to split right and down, and
+/// buttons to search and open the main menu. This pairs well with
+/// `gtk-split-titlebar`.
+///
 /// The default style is `native`.
 @"gtk-titlebar-style": GtkTitlebarStyle = .native,
 
@@ -9368,6 +9375,7 @@ pub const GtkToolbarStyle = enum {
 pub const GtkTitlebarStyle = enum(c_int) {
     native,
     tabs,
+    tilix,
 
     pub const getGObjectType = switch (build_config.app_runtime) {
         .gtk => @import("gobject").ext.defineEnum(
