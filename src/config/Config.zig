@@ -1473,6 +1473,13 @@ link: RepeatableLink = .{},
 /// `link`). If you want to customize URL matching, use `link` and disable this.
 @"link-url": bool = true,
 
+/// Highlight links (matched URLs and OSC 8 hyperlinks) when hovering them
+/// even when control (Linux) or command (macOS) isn't pressed, like Tilix.
+/// Opening a link by clicking it still requires control (Linux) or command
+/// (macOS) to be pressed. When false, links are only highlighted while the
+/// modifier is pressed.
+@"link-hover-highlight": bool = true,
+
 /// Enable hyperlinks created with the OSC 8 escape sequence. When disabled,
 /// OSC 8 hyperlinks are not highlighted, previewed, copied, or opened.
 ///
@@ -4972,7 +4979,20 @@ pub fn finalize(self: *Config) !void {
 
     // If URLs are disabled, cut off the first link. The first link is
     // always the URL matcher.
-    if (!self.@"link-url") self.link.links.items = self.link.links.items[1..];
+    if (!self.@"link-url") {
+        self.link.links.items = self.link.links.items[1..];
+    } else if (self.@"link-hover-highlight") {
+        // Highlight the URL matcher on hover without mods, but still
+        // require the mods to open it.
+        const url_link = &self.link.links.items[0];
+        switch (url_link.highlight) {
+            .hover_mods => |mods| {
+                url_link.highlight = .hover;
+                url_link.open_mods = mods;
+            },
+            else => {},
+        }
+    }
 
     // We warn when the quit-after-last-window-closed-delay is set to a very
     // short value because it can cause Ghostty to quit before the first

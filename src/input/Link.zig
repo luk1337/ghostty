@@ -21,6 +21,11 @@ action: Action,
 /// when the link is clickable.
 highlight: Highlight,
 
+/// If set, these mods must also be pressed to open the link by clicking
+/// it. This allows highlighting a link on hover without any mods while
+/// still requiring mods to open it.
+open_mods: ?Mods = null,
+
 pub const Action = union(enum) {
     /// Open the full matched value using the default open program.
     /// For example, on macOS this is "open" and on Linux this is "xdg-open".
@@ -68,6 +73,7 @@ pub fn clone(self: *const Link, alloc: Allocator) Allocator.Error!Link {
         .regex = try alloc.dupe(u8, self.regex),
         .action = self.action,
         .highlight = self.highlight,
+        .open_mods = self.open_mods,
     };
 }
 
@@ -75,5 +81,6 @@ pub fn clone(self: *const Link, alloc: Allocator) Allocator.Error!Link {
 pub fn equal(self: *const Link, other: *const Link) bool {
     return std.meta.eql(self.action, other.action) and
         std.meta.eql(self.highlight, other.highlight) and
+        std.meta.eql(self.open_mods, other.open_mods) and
         std.mem.eql(u8, self.regex, other.regex);
 }
