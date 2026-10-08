@@ -2170,6 +2170,26 @@ fn resolvePathForOpening(
     self: *Surface,
     path: []const u8,
 ) Allocator.Error!?[]const u8 {
+    // Expand paths in the home directory (~/), which the system opener
+    // doesn't understand.
+    if (std.mem.startsWith(u8, path, "~/")) {
+        if (comptime builtin.os.tag == .windows) return null;
+
+        var environ_map = global.environMap() catch return null;
+        defer environ_map.deinit();
+
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const expanded = internal_os.expandHome(
+            global.io(),
+            &environ_map,
+            path,
+            &buf,
+        ) catch return null;
+
+        std.Io.Dir.accessAbsolute(global.io(), expanded, .{}) catch return null;
+        return try self.alloc.dupe(u8, expanded);
+    }
+
     if (!std.fs.path.isAbsolute(path)) {
         const terminal_pwd = self.io.terminal.getPwd() orelse {
             return null;
