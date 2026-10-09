@@ -1480,6 +1480,13 @@ link: RepeatableLink = .{},
 /// modifier is pressed.
 @"link-hover-highlight": bool = true,
 
+/// Allow detected file paths to contain spaces, e.g. `~/My Documents/a.txt`.
+/// Since paths with spaces are ambiguous with space-separated arguments, a
+/// command like `cp ~/foo bar` would then highlight `~/foo bar` as a single
+/// path. When false (default), paths end at a space like in most terminals
+/// (e.g. Tilix).
+@"link-path-spaces": bool = false,
+
 /// Enable hyperlinks created with the OSC 8 escape sequence. When disabled,
 /// OSC 8 hyperlinks are not highlighted, previewed, copied, or opened.
 ///
@@ -5008,7 +5015,16 @@ pub fn finalize(self: *Config) !void {
     // always the URL matcher.
     if (!self.@"link-url") {
         self.link.links.items = self.link.links.items[1..];
-    } else if (self.@"link-hover-highlight") {
+    } else {
+        const url_link = &self.link.links.items[0];
+        if (!self.@"link-path-spaces" and
+            std.mem.eql(u8, url_link.regex, url.regex))
+        {
+            url_link.regex = url.regex_no_spaces;
+        }
+    }
+
+    if (self.@"link-url" and self.@"link-hover-highlight") {
         // Highlight the URL matcher on hover without mods, but still
         // require the mods to open it.
         const url_link = &self.link.links.items[0];
