@@ -2565,6 +2565,18 @@ keybind: Keybinds = .{},
 /// The default value is `context-menu`.
 @"right-click-action": RightClickAction = .@"context-menu",
 
+/// When true, ctrl+<character> combinations that have no traditional control
+/// code (e.g. ctrl+period or ctrl+semicolon) are sent using the "fixterms"
+/// CSI u encoding even if the running program didn't ask for extended key
+/// reporting. Programs that don't expect this (e.g. zsh's line editor) show
+/// stray characters such as `6;5u` when such a combination is typed, which
+/// easily happens when typing quickly after a ctrl shortcut.
+///
+/// When false, the character is sent without ctrl like xterm and VTE-based
+/// terminals (e.g. Tilix) do. Programs that enable xterm's modifyOtherKeys
+/// or the Kitty keyboard protocol always receive the full encoding.
+@"ctrl-key-fixterms": bool = false,
+
 /// When `right-click-action` is `context-menu`, select the word (or link)
 /// under the mouse when right-clicking outside of the current selection, so
 /// that context menu actions such as copy apply to it. When false, right
