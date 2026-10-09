@@ -80,20 +80,22 @@ const rooted_or_relative_path_prefix =
 
 // Branch 2: Absolute paths and dot-relative paths (/, ./, ../).
 // A dotted segment is treated as file-like, while the undotted case stays
-// broad to capture directory-like paths with spaces.
-const rooted_or_relative_path_branch =
-    rooted_or_relative_path_prefix ++
-    "(?:" ++
-    dotted_path_lookahead ++
-    path_chars ++ "+" ++
-    dotted_path_space_segments ++
-    no_trailing_colon ++
-    "|" ++
-    non_dotted_path_lookahead ++
-    path_chars ++ "+" ++
-    any_path_space_segments ++
-    no_trailing_colon ++
-    ")";
+// broad to capture directory-like paths with spaces. If `spaces` is false
+// then paths never continue past a space.
+fn rootedOrRelativePathBranch(comptime spaces: bool) []const u8 {
+    return rooted_or_relative_path_prefix ++
+        "(?:" ++
+        dotted_path_lookahead ++
+        path_chars ++ "+" ++
+        (if (spaces) dotted_path_space_segments else "") ++
+        no_trailing_colon ++
+        "|" ++
+        non_dotted_path_lookahead ++
+        path_chars ++ "+" ++
+        (if (spaces) any_path_space_segments else "") ++
+        no_trailing_colon ++
+        ")";
+}
 
 // Branch 3: Bare relative paths such as src/config/url.zig.
 const bare_relative_path_prefix =
@@ -106,12 +108,20 @@ const bare_relative_path_branch =
     path_chars ++ "+" ++
     no_trailing_colon;
 
-pub const regex =
-    scheme_url_branch ++
-    "|" ++
-    rooted_or_relative_path_branch ++
-    "|" ++
-    bare_relative_path_branch;
+pub const regex = buildRegex(true);
+
+/// Like `regex` but paths never contain spaces, like most terminals (e.g.
+/// Tilix). Paths with spaces are ambiguous with space-separated arguments
+/// such as `cp ~/foo bar`.
+pub const regex_no_spaces = buildRegex(false);
+
+fn buildRegex(comptime spaces: bool) []const u8 {
+    return scheme_url_branch ++
+        "|" ++
+        rootedOrRelativePathBranch(spaces) ++
+        "|" ++
+        bare_relative_path_branch;
+}
 
 test "url regex" {
     const testing = std.testing;
@@ -513,5 +523,38 @@ test "url regex" {
             reg.deinit();
             return error.TestUnexpectedResult;
         } else |_| {}
+    }
+}
+
+test "url regex without spaces" {
+    const testing = std.testing;
+
+    try oni.testing.ensureInit();
+    var re = try oni.Regex.init(
+        regex_no_spaces,
+        .{},
+        oni.Encoding.utf8,
+        oni.Syntax.default,
+        null,
+    );
+    defer re.deinit();
+
+    const cases = [_]struct {
+        input: []const u8,
+        expect: []const u8,
+    }{
+        .{ .input = "cp ~/xxx xxx", .expect = "~/xxx" },
+        .{ .input = "cp ~/foo.txt bar.txt", .expect = "~/foo.txt" },
+        .{ .input = "ls /tmp/a b", .expect = "/tmp/a" },
+        .{ .input = "./space middle", .expect = "./space" },
+        .{ .input = "see https://example.com/a b", .expect = "https://example.com/a" },
+        .{ .input = "edit src/config/url.zig now", .expect = "src/config/url.zig" },
+    };
+
+    for (cases) |case| {
+        var reg = try re.search(case.input, .{});
+        defer reg.deinit();
+        const match = case.input[@intCast(reg.starts()[0])..@intCast(reg.ends()[0])];
+        try testing.expectEqualStrings(case.expect, match);
     }
 }
