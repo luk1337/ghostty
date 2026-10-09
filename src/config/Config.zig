@@ -2565,6 +2565,15 @@ keybind: Keybinds = .{},
 /// The default value is `context-menu`.
 @"right-click-action": RightClickAction = .@"context-menu",
 
+/// When true, dragging with control held makes a rectangle (block)
+/// selection, like Tilix and other VTE-based terminals. Clicking a link with
+/// control held without dragging still opens it. The mouse pointer isn't
+/// changed when control is held. When false, rectangle selection requires
+/// control and alt, and a crosshair pointer is shown while they are held.
+///
+/// This has no effect on macOS, where rectangle selection uses option.
+@"ctrl-drag-rectangle-select": bool = true,
+
 /// When true, ctrl+<character> combinations that have no traditional control
 /// code (e.g. ctrl+period or ctrl+semicolon) are sent using the "fixterms"
 /// CSI u encoding even if the running program didn't ask for extended key

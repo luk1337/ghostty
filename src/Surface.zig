@@ -328,6 +328,7 @@ const DerivedConfig = struct {
     macos_non_native_fullscreen: configpkg.NonNativeFullscreen,
     macos_option_as_alt: ?input.OptionAsAlt,
     ctrl_key_fixterms: bool,
+    ctrl_drag_rectangle_select: bool,
     selection_clear_on_copy: bool,
     selection_clear_on_typing: bool,
     selection_word_chars: []const u21,
@@ -414,6 +415,7 @@ const DerivedConfig = struct {
             .macos_non_native_fullscreen = config.@"macos-non-native-fullscreen",
             .macos_option_as_alt = config.@"macos-option-as-alt",
             .ctrl_key_fixterms = config.@"ctrl-key-fixterms",
+            .ctrl_drag_rectangle_select = config.@"ctrl-drag-rectangle-select",
             .selection_clear_on_copy = config.@"selection-clear-on-copy",
             .selection_clear_on_typing = config.@"selection-clear-on-typing",
             .selection_word_chars = try alloc.dupe(u21, config.@"selection-word-chars".codepoints),
@@ -1241,7 +1243,10 @@ fn selectionScrollTick(self: *Surface) !void {
         .viewport = pos_vp,
         .xpos = pos.x,
         .ypos = pos.y,
-        .rectangle = SurfaceMouse.isRectangleSelectState(self.mouse.mods),
+        .rectangle = SurfaceMouse.isRectangleSelectState(
+            self.mouse.mods,
+            self.config.ctrl_drag_rectangle_select,
+        ),
         .word_boundary_codepoints = self.config.selection_word_chars,
         .geometry = .{
             .columns = @intCast(self.size.grid().columns),
@@ -2900,6 +2905,7 @@ pub fn keyCallback(
         .mods = self.mouse.mods,
         .over_link = self.mouse.over_link,
         .hidden = self.mouse.hidden,
+        .ctrl_drag_rectangle = self.config.ctrl_drag_rectangle_select,
     }).keyToMouseShape()) |shape| _ = try self.rt_app.performAction(
         .{ .surface = self },
         .mouse_shape,
@@ -4844,7 +4850,10 @@ pub fn cursorPosCallback(
             .pin = pin,
             .xpos = pos.x,
             .ypos = pos.y,
-            .rectangle = SurfaceMouse.isRectangleSelectState(self.mouse.mods),
+            .rectangle = SurfaceMouse.isRectangleSelectState(
+                self.mouse.mods,
+                self.config.ctrl_drag_rectangle_select,
+            ),
             .word_boundary_codepoints = self.config.selection_word_chars,
             .geometry = .{
                 .columns = @intCast(self.size.grid().columns),
