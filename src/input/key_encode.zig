@@ -37,6 +37,12 @@ pub const Options = struct {
     /// Kitty keyboard protocol flags.
     kitty_flags: KittyFlags = .disabled,
 
+    /// Whether to encode ctrl+<character> combinations that have no C0
+    /// control code (e.g. ctrl+period) using the fixterms CSI u encoding
+    /// in legacy mode, even if modifyOtherKeys isn't enabled. If false,
+    /// the character is sent as-is, like xterm and VTE-based terminals.
+    ctrl_fixterms: bool = true,
+
     /// Determines whether the "option" key on macOS is treated
     /// as "alt" or not. See the Ghostty `macos_option-as-alt` config
     /// docs for a more detailed description of why this is needed.
@@ -480,7 +486,7 @@ fn legacy(
     // Let's see if we should apply fixterms to this codepoint.
     // At this stage of key processing, we only need to apply fixterms
     // to unicode codepoints if we have ctrl set.
-    if (event.mods.ctrl) csiu: {
+    if (event.mods.ctrl and opts.ctrl_fixterms) csiu: {
         // Important: we want to use the original mods here, not the
         // effective mods. The fixterms spec states the shifted chars
         // should be sent uppercase but Kitty changes that behavior
@@ -2088,6 +2094,42 @@ test "legacy: ctrl+shift+minus (underscore on US)" {
         .utf8 = "_",
     }, .{});
     try testing.expectEqualStrings("\x1F", writer.buffered());
+}
+
+test "legacy: ctrl+period" {
+    var buf: [128]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+    try legacy(&writer, .{
+        .key = .period,
+        .mods = .{ .ctrl = true },
+        .utf8 = ".",
+        .unshifted_codepoint = '.',
+    }, .{});
+    try testing.expectEqualStrings("\x1b[46;5u", writer.buffered());
+}
+
+test "legacy: ctrl+period without fixterms" {
+    var buf: [128]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+    try legacy(&writer, .{
+        .key = .period,
+        .mods = .{ .ctrl = true },
+        .utf8 = ".",
+        .unshifted_codepoint = '.',
+    }, .{ .ctrl_fixterms = false });
+    try testing.expectEqualStrings(".", writer.buffered());
+}
+
+test "legacy: ctrl+c without fixterms" {
+    var buf: [128]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+    try legacy(&writer, .{
+        .key = .key_c,
+        .mods = .{ .ctrl = true },
+        .utf8 = "c",
+        .unshifted_codepoint = 'c',
+    }, .{ .ctrl_fixterms = false });
+    try testing.expectEqualStrings("\x03", writer.buffered());
 }
 
 test "legacy: ctrl+alt+c" {
