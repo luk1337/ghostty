@@ -31,6 +31,12 @@ over_link: bool,
 /// True if the mouse pointer is currently hidden.
 hidden: bool,
 
+/// True if ctrl+drag makes a rectangle selection (see the
+/// `ctrl-drag-rectangle-select` config). In that case we never show a
+/// crosshair pointer since ctrl is also used for other things such as
+/// opening links.
+ctrl_drag_rectangle: bool = false,
+
 /// Translates key state to mouse shape, called during key events. This mainly
 /// handles overrides on key presses depending on whether or not we are in
 /// mouse tracking mode, however it is also responsible for resetting cursor
@@ -53,7 +59,10 @@ pub fn keyToMouseShape(self: SurfaceMouse) ?MouseShape {
     switch (self.mouse_event != .none) {
         true => {
             // In mouse tracking mode
-            if (isMouseModeOverrideState(self.mods) and isRectangleSelectState(self.mods)) {
+            if (!self.ctrl_drag_rectangle and
+                isMouseModeOverrideState(self.mods) and
+                isRectangleSelectState(self.mods, false))
+            {
                 // Crosshair (rectangle select), only set if we are also
                 // overriding (e.g. shift+ctrl+alt)
                 return .crosshair;
@@ -65,7 +74,7 @@ pub fn keyToMouseShape(self: SurfaceMouse) ?MouseShape {
 
         false => {
             // Default terminal mode
-            if (isRectangleSelectState(self.mods)) {
+            if (!self.ctrl_drag_rectangle and isRectangleSelectState(self.mods, false)) {
                 // Crosshair (rectangle select)
                 return .crosshair;
             } else if (isMouseModeOverrideState(self.mods)) {
@@ -94,10 +103,13 @@ fn isMouseModeOverrideState(mods: input.Mods) bool {
 }
 
 /// Returns true if our modifiers put us in a state where dragging
-/// should cause a rectangle select.
-pub fn isRectangleSelectState(mods: input.Mods) bool {
+/// should cause a rectangle select. If `ctrl_drag` is true then ctrl
+/// alone is enough on non-macOS platforms, like VTE-based terminals.
+pub fn isRectangleSelectState(mods: input.Mods, ctrl_drag: bool) bool {
     return if (comptime builtin.target.os.tag.isDarwin())
         mods.alt
+    else if (ctrl_drag)
+        mods.ctrlOrSuper()
     else
         mods.ctrlOrSuper() and mods.alt;
 }
@@ -294,4 +306,32 @@ test "keyToMouseShape" {
         const got = m.keyToMouseShape();
         try testing.expect(want == got);
     }
+}
+
+test "isRectangleSelectState with ctrl drag" {
+    const testing = std.testing;
+    if (comptime builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
+
+    try testing.expect(isRectangleSelectState(.{ .ctrl = true }, true));
+    try testing.expect(isRectangleSelectState(.{ .ctrl = true, .alt = true }, true));
+    try testing.expect(!isRectangleSelectState(.{}, true));
+    try testing.expect(!isRectangleSelectState(.{ .ctrl = true }, false));
+    try testing.expect(isRectangleSelectState(.{ .ctrl = true, .alt = true }, false));
+}
+
+test "keyToMouseShape no crosshair with ctrl drag" {
+    const testing = std.testing;
+    if (comptime builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
+
+    const m: SurfaceMouse = .{
+        .physical_key = .control_left,
+        .mouse_event = .none,
+        .mouse_shape = .text,
+        .mods = .{ .ctrl = true, .alt = true },
+        .over_link = false,
+        .hidden = false,
+        .ctrl_drag_rectangle = true,
+    };
+
+    try testing.expectEqual(@as(?MouseShape, .text), m.keyToMouseShape());
 }
