@@ -84,3 +84,48 @@ pub fn equal(self: *const Link, other: *const Link) bool {
         std.meta.eql(self.open_mods, other.open_mods) and
         std.mem.eql(u8, self.regex, other.regex);
 }
+
+/// Runs of non-whitespace longer than this are never matched as links.
+/// Link regexes can be quadratic in the length of a run (e.g. base64
+/// output), and no realistic link is this long.
+pub const max_run_len = 2048;
+
+/// Replace runs of non-whitespace longer than `max_run_len` with spaces
+/// so link regexes skip them. Byte offsets are preserved.
+pub fn maskLongRuns(str: []u8) void {
+    var start: usize = 0;
+    for (str, 0..) |c, i| {
+        if (!std.ascii.isWhitespace(c)) continue;
+        if (i - start > max_run_len) @memset(str[start..i], ' ');
+        start = i + 1;
+    }
+    if (str.len - start > max_run_len) @memset(str[start..], ' ');
+}
+
+test "maskLongRuns" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    const long: [2 * (max_run_len / 2 + 1)]u8 = comptime long: {
+        @setEvalBranchQuota(4 * max_run_len);
+        var buf: [2 * (max_run_len / 2 + 1)]u8 = undefined;
+        for (&buf, 0..) |*c, i| c.* = "a/"[i % 2];
+        break :long buf;
+    };
+    const input = "ok " ++ long ++ "\nhttps://x.org " ++ long;
+    const str = try alloc.dupe(u8, input);
+    defer alloc.free(str);
+    maskLongRuns(str);
+
+    try testing.expectEqual(input.len, str.len);
+    try testing.expectEqualStrings("ok ", str[0..3]);
+    const blank: [long.len]u8 = @splat(' ');
+    try testing.expectEqualStrings(blank ++ "\nhttps://x.org " ++ blank, str[3..]);
+
+    // Runs up to the limit are kept.
+    const xs: [max_run_len]u8 = @splat('x');
+    const exact = try alloc.dupe(u8, &xs);
+    defer alloc.free(exact);
+    maskLongRuns(exact);
+    try testing.expectEqualStrings(&xs, exact);
+}

@@ -99,6 +99,7 @@ pub const Set = struct {
         });
 
         const str = builder.writer.buffered();
+        inputpkg.Link.maskLongRuns(str);
 
         // Go through each link and see if we have any matches.
         for (self.links) |*link| {
