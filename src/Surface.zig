@@ -4513,6 +4513,9 @@ fn linkAtPin(
     });
     defer strmap.deinit(self.alloc);
 
+    // We own the string, so we can modify it.
+    input.Link.maskLongRuns(@constCast(strmap.string));
+
     for (self.config.links) |link| {
         // Skip highlight/mods check when mouse_mods is null (double-click mode)
         if (mouse_mods) |mods| {
