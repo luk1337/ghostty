@@ -16899,3 +16899,22 @@ test "Terminal: eraseDisplay complete ignores stale prompt on recycled row" {
 
     try testing.expectEqual(t.screens.active.pages.rows, t.screens.active.pages.total_rows);
 }
+
+test "Terminal: raw C1 bytes after ESC aren't executed" {
+    const alloc = testing.allocator;
+    var t = try init(testing.io, alloc, .{ .cols = 10, .rows = 2 });
+    defer t.deinit(alloc);
+    var s = t.vtStream();
+    defer s.deinit();
+
+    // ESC 0x96 would be SPA (ESC V), protecting the text from ED. ESC 0xA4
+    // followed by '7' would be DECSC.
+    s.nextSlice("\x1b\x96A\x1b\xa47B");
+    try testing.expect(!t.screens.active.cursor.protected);
+    try testing.expect(t.screens.active.protected_mode != .iso);
+
+    s.nextSlice("\x1b[H\x1b[2J");
+    const str = try t.plainString(alloc);
+    defer alloc.free(str);
+    try testing.expectEqualStrings("", str);
+}

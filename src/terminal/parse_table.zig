@@ -363,6 +363,33 @@ fn genTable() Table {
         single(&result, 0x07, source, .ground, .none);
     }
 
+    // High bytes abort escape, CSI and DCS sequences that haven't reached
+    // their payload yet, overriding the "anywhere" C1 transitions. Ghostty
+    // is UTF-8 only and doesn't honor 8-bit C1 controls in the ground state
+    // (they go through UTF-8 decoding), so they shouldn't be honored here
+    // either. Otherwise, binary output can execute controls such as SPA
+    // (ESC 0x96), which protects all following text from being erased.
+    // Returning to ground (rather than ignoring the byte) also prevents the
+    // next byte from completing the sequence, e.g. ESC 0xA4 '7' as DECSC.
+    for ([_]State{
+        .escape,
+        .escape_intermediate,
+        .csi_entry,
+        .csi_intermediate,
+        .csi_param,
+        .csi_ignore,
+        .dcs_entry,
+        .dcs_param,
+        .dcs_intermediate,
+    }) |source| {
+        range(&result, 0x80, 0xFF, source, .ground, .none);
+    }
+
+    // Likewise, high bytes are ignored payload in SOS/PM/APC strings rather
+    // than C1 controls, so a UTF-8 or binary payload can't begin a sequence
+    // (e.g. 0x9B => csi_entry) mid-string.
+    range(&result, 0x80, 0xFF, .sos_pm_apc_string, .sos_pm_apc_string, .ignore);
+
     // Create our immutable version
     var final: Table = undefined;
     for (0..final.len) |i| {
@@ -429,6 +456,34 @@ test "dcs_ignore: high bytes are ignored payload data" {
     for (0x80..0x100) |c| {
         const entry = table[c][@intFromEnum(State.dcs_ignore)];
         try std.testing.expectEqual(State.dcs_ignore, entry.state);
+        try std.testing.expectEqual(Action.ignore, entry.action);
+    }
+}
+
+test "high bytes abort sequences before their payload" {
+    for ([_]State{
+        .escape,
+        .escape_intermediate,
+        .csi_entry,
+        .csi_intermediate,
+        .csi_param,
+        .csi_ignore,
+        .dcs_entry,
+        .dcs_param,
+        .dcs_intermediate,
+    }) |state| {
+        for (0x80..0x100) |c| {
+            const entry = table[c][@intFromEnum(state)];
+            try std.testing.expectEqual(State.ground, entry.state);
+            try std.testing.expectEqual(Action.none, entry.action);
+        }
+    }
+}
+
+test "sos_pm_apc_string: high bytes are ignored payload data" {
+    for (0x80..0x100) |c| {
+        const entry = table[c][@intFromEnum(State.sos_pm_apc_string)];
+        try std.testing.expectEqual(State.sos_pm_apc_string, entry.state);
         try std.testing.expectEqual(Action.ignore, entry.action);
     }
 }
