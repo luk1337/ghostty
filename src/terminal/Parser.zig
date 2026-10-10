@@ -433,9 +433,11 @@ pub inline fn clear(self: *Parser) void {
 
 test {
     var p = init();
-    _ = p.next(0x9E);
+    _ = p.next(0x1B);
+    _ = p.next('^');
     try testing.expect(p.state == .sos_pm_apc_string);
-    _ = p.next(0x9C);
+    _ = p.next(0x1B);
+    _ = p.next('\\');
     try testing.expect(p.state == .ground);
 
     {
