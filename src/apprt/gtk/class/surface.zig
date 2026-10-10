@@ -3036,6 +3036,30 @@ pub const Surface = extern struct {
         }
     }
 
+    /// GTK cancels the click gesture if another button is pressed while
+    /// one is held (e.g. a right click while selecting), and we never get
+    /// the release for the held button. Release all held buttons so the
+    /// core doesn't think they're still pressed (e.g. selecting forever).
+    fn gcMouseCancel(
+        _: *gtk.GestureClick,
+        _: ?*gdk.EventSequence,
+        self: *Self,
+    ) callconv(.c) void {
+        const priv = self.private();
+        priv.suppress_left_mouse_release = false;
+        const surface = priv.core_surface orelse return;
+        for (surface.mouse.click_state, 0..) |state, i| {
+            if (state != .press) continue;
+            _ = surface.mouseButtonCallback(
+                .release,
+                @enumFromInt(i),
+                surface.mouse.mods,
+            ) catch |err| {
+                log.warn("error in mouse cancel callback err={}", .{err});
+            };
+        }
+    }
+
     fn ecMouseMotion(
         ec: *gtk.EventControllerMotion,
         x: f64,
@@ -3985,6 +4009,7 @@ pub const Surface = extern struct {
             class.bindTemplateCallback("key_released", &ecKeyReleased);
             class.bindTemplateCallback("mouse_down", &gcMouseDown);
             class.bindTemplateCallback("mouse_up", &gcMouseUp);
+            class.bindTemplateCallback("mouse_cancel", &gcMouseCancel);
             class.bindTemplateCallback("mouse_motion", &ecMouseMotion);
             class.bindTemplateCallback("mouse_leave", &ecMouseLeave);
             class.bindTemplateCallback("scroll_vertical", &ecMouseScrollVertical);
