@@ -98,11 +98,20 @@ fn rootedOrRelativePathBranch(comptime spaces: bool) []const u8 {
 }
 
 // Branch 3: Bare relative paths such as src/config/url.zig.
+//
+// The dotted lookahead scans to the end of the path, so it comes after the
+// cheap word start checks. Otherwise it would run at every position, which
+// is quadratic for long runs of path characters (e.g. base64).
+const bare_relative_path_word_start =
+    \\(?<!\$\d*)(?<!\w)
+;
+
 const bare_relative_path_prefix =
-    \\(?<!\$\d*)(?<!\w)[\w][\w\-.]*\/
+    \\[\w][\w\-.]*\/
 ;
 
 const bare_relative_path_branch =
+    bare_relative_path_word_start ++
     dotted_path_lookahead ++
     bare_relative_path_prefix ++
     path_chars ++ "+" ++
