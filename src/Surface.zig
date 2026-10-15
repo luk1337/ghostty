@@ -330,6 +330,7 @@ const DerivedConfig = struct {
     macos_non_native_fullscreen: configpkg.NonNativeFullscreen,
     macos_option_as_alt: ?input.OptionAsAlt,
     ctrl_key_fixterms: bool,
+    special_key_csi27: bool,
     ctrl_drag_rectangle_select: bool,
     selection_clear_on_copy: bool,
     selection_clear_on_typing: bool,
@@ -417,6 +418,7 @@ const DerivedConfig = struct {
             .macos_non_native_fullscreen = config.@"macos-non-native-fullscreen",
             .macos_option_as_alt = config.@"macos-option-as-alt",
             .ctrl_key_fixterms = config.@"ctrl-key-fixterms",
+            .special_key_csi27 = config.@"special-key-csi27",
             .ctrl_drag_rectangle_select = config.@"ctrl-drag-rectangle-select",
             .selection_clear_on_copy = config.@"selection-clear-on-copy",
             .selection_clear_on_typing = config.@"selection-clear-on-typing",
@@ -3442,6 +3444,7 @@ fn encodeKeyOpts(self: *const Surface) input.key_encode.Options {
 
     var opts: input.key_encode.Options = .fromTerminal(t);
     opts.ctrl_fixterms = self.config.ctrl_key_fixterms;
+    opts.special_key_csi27 = self.config.special_key_csi27;
     if (comptime builtin.target.os.tag != .macos) return opts;
 
     opts.macos_option_as_alt = self.config.macos_option_as_alt orelse detect: {
