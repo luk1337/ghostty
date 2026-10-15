@@ -43,6 +43,13 @@ pub const Options = struct {
     /// the character is sent as-is, like xterm and VTE-based terminals.
     ctrl_fixterms: bool = true,
 
+    /// Whether to encode tab, enter and escape with modifiers that have no
+    /// traditional encoding (e.g. shift+enter or ctrl+tab) using xterm's
+    /// modifyOtherKeys CSI 27 encoding in legacy mode, even if
+    /// modifyOtherKeys isn't enabled. If false, the plain key is sent
+    /// (ESC-prefixed with alt), like xterm and VTE-based terminals.
+    special_key_csi27: bool = true,
+
     /// Determines whether the "option" key on macOS is treated
     /// as "alt" or not. See the Ghostty `macos_option-as-alt` config
     /// docs for a more detailed description of why this is needed.
@@ -380,6 +387,23 @@ fn legacy(
                     break :pc_style;
                 },
             }
+        }
+
+        // Programs that didn't enable modifyOtherKeys usually don't
+        // understand the CSI 27 encoding and treat its tail as text,
+        // e.g. nano with shift+enter. Send the plain key instead.
+        if (!opts.special_key_csi27 and
+            !opts.modify_other_keys_state_2 and
+            std.mem.startsWith(u8, sequence, "\x1b[27;"))
+        plain: {
+            const char: u8 = switch (event.key) {
+                .tab => '\t',
+                .enter => '\r',
+                .escape => 0x1B,
+                else => break :plain,
+            };
+            if (binding_mods.alt) try writer.writeByte(0x1B);
+            return try writer.writeByte(char);
         }
 
         return try writer.writeAll(sequence);
@@ -2130,6 +2154,62 @@ test "legacy: ctrl+c without fixterms" {
         .unshifted_codepoint = 'c',
     }, .{ .ctrl_fixterms = false });
     try testing.expectEqualStrings("\x03", writer.buffered());
+}
+
+test "legacy: shift+enter" {
+    var buf: [128]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+    try legacy(&writer, .{
+        .key = .enter,
+        .mods = .{ .shift = true },
+        .utf8 = "\r",
+    }, .{});
+    try testing.expectEqualStrings("\x1b[27;2;13~", writer.buffered());
+}
+
+test "legacy: shift+enter without csi27" {
+    var buf: [128]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+    try legacy(&writer, .{
+        .key = .enter,
+        .mods = .{ .shift = true },
+        .utf8 = "\r",
+    }, .{ .special_key_csi27 = false });
+    try testing.expectEqualStrings("\r", writer.buffered());
+}
+
+test "legacy: ctrl+alt+enter without csi27" {
+    var buf: [128]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+    try legacy(&writer, .{
+        .key = .enter,
+        .mods = .{ .ctrl = true, .alt = true },
+    }, .{ .special_key_csi27 = false });
+    try testing.expectEqualStrings("\x1b\r", writer.buffered());
+}
+
+test "legacy: ctrl+tab without csi27" {
+    var buf: [128]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+    try legacy(&writer, .{
+        .key = .tab,
+        .mods = .{ .ctrl = true },
+    }, .{ .special_key_csi27 = false });
+    try testing.expectEqualStrings("\t", writer.buffered());
+}
+
+test "legacy: shift+enter without csi27 with modify other keys" {
+    var buf: [128]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+    try legacy(&writer, .{
+        .key = .enter,
+        .mods = .{ .shift = true },
+        .utf8 = "\r",
+    }, .{
+        .special_key_csi27 = false,
+        .modify_other_keys_state_2 = true,
+    });
+    try testing.expectEqualStrings("\x1b[27;2;13~", writer.buffered());
 }
 
 test "legacy: ctrl+alt+c" {

@@ -2593,6 +2593,20 @@ keybind: Keybinds = .{},
 /// or the Kitty keyboard protocol always receive the full encoding.
 @"ctrl-key-fixterms": bool = false,
 
+/// When true, tab, enter and escape combined with modifiers that have no
+/// traditional encoding (e.g. shift+enter, ctrl+enter or ctrl+tab) are sent
+/// using xterm's modifyOtherKeys `CSI 27 ; <mods> ; <key> ~` encoding even if
+/// the running program didn't ask for it. Programs that don't expect this
+/// (e.g. nano) insert stray characters such as `;13~` when such a combination
+/// is typed, which easily happens when a modifier is still held while
+/// pressing enter.
+///
+/// When false, the plain key is sent (prefixed with escape if alt is held)
+/// like xterm and VTE-based terminals (e.g. Tilix) do. Programs that enable
+/// xterm's modifyOtherKeys or the Kitty keyboard protocol always receive the
+/// full encoding.
+@"special-key-csi27": bool = false,
+
 /// When `right-click-action` is `context-menu`, select the word (or link)
 /// under the mouse when right-clicking outside of the current selection, so
 /// that context menu actions such as copy apply to it. When false, right
