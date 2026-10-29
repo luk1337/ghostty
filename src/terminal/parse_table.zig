@@ -363,6 +363,25 @@ fn genTable() Table {
         single(&result, 0x07, source, .ground, .none);
     }
 
+    // High bytes abort escape and CSI sequences, overriding the "anywhere"
+    // C1 transitions. Ghostty
+    // is UTF-8 only and doesn't honor 8-bit C1 controls in the ground state
+    // (they go through UTF-8 decoding), so they shouldn't be honored here
+    // either. Otherwise, binary output can execute controls such as SPA
+    // (ESC 0x96), which protects all following text from being erased.
+    // Returning to ground (rather than ignoring the byte) also prevents the
+    // next byte from completing the sequence, e.g. ESC 0xA4 '7' as DECSC.
+    for ([_]State{
+        .escape,
+        .escape_intermediate,
+        .csi_entry,
+        .csi_intermediate,
+        .csi_param,
+        .csi_ignore,
+    }) |source| {
+        range(&result, 0x80, 0xFF, source, .ground, .none);
+    }
+
     // Create our immutable version
     var final: Table = undefined;
     for (0..final.len) |i| {
@@ -430,6 +449,23 @@ test "dcs_ignore: high bytes are ignored payload data" {
         const entry = table[c][@backingInt(State.dcs_ignore)];
         try std.testing.expectEqual(State.dcs_ignore, entry.state);
         try std.testing.expectEqual(Action.ignore, entry.action);
+    }
+}
+
+test "high bytes abort escape and csi sequences" {
+    for ([_]State{
+        .escape,
+        .escape_intermediate,
+        .csi_entry,
+        .csi_intermediate,
+        .csi_param,
+        .csi_ignore,
+    }) |state| {
+        for (0x80..0x100) |c| {
+            const entry = table[c][@backingInt(state)];
+            try std.testing.expectEqual(State.ground, entry.state);
+            try std.testing.expectEqual(Action.none, entry.action);
+        }
     }
 }
 

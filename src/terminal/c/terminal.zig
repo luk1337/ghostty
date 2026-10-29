@@ -3778,9 +3778,10 @@ test "vt_write_until c1 introducer" {
     ));
     defer free(t);
 
-    // At ground a raw C1 byte goes through the UTF-8 decoder, so the
-    // introducer is only recognized from inside another sequence.
-    vt_write(t, "\x1b[1", 3);
+    // At ground a raw C1 byte goes through the UTF-8 decoder and after
+    // an ESC or inside a CSI it aborts the sequence, so the introducer
+    // is only recognized from inside a string or a DCS header.
+    vt_write(t, "\x1bP1", 3);
 
     const apc_start: u32 = @backingInt(Boundary.apc_start);
     var stop: WriteStop = .{};

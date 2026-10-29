@@ -3433,8 +3433,9 @@ pub const Boundary = enum {
     ///   byte, because the ESC may have been consumed by an earlier call.
     /// - `c1`: a single 8-bit byte, 0x9F (APC), 0x98 (SOS), 0x9E (PM),
     ///   0x90 (DCS) or 0x9D (OSC). At ground these bytes are decoded as
-    ///   UTF-8 instead, so they only start a string when they arrive
-    ///   inside another escape sequence.
+    ///   UTF-8 instead, and after an ESC or inside a CSI they abort the
+    ///   sequence, so they only start a string when they arrive inside
+    ///   another string or a DCS header.
     pub const Introducer = lib.Enum(lib.target, &.{ "esc", "c1" });
 
     /// How a control string ended.
@@ -6008,10 +6009,10 @@ test "stream: nextSliceUntil apc introducers" {
     }
 
     // C1 introducers from non-ground states. At ground a raw C1 byte
-    // goes through the UTF-8 decoder instead, so prime with a CSI
-    // (the csi_param fast path) and with a bare ESC (Parser.next).
+    // goes through the UTF-8 decoder instead, and after an ESC or inside
+    // a CSI it aborts the sequence, so prime with DCS headers.
     for ([_]u8{ 0x98, 0x9E, 0x9F }) |c1| {
-        for ([_][]const u8{ "\x1b[1", "\x1b" }) |prime| {
+        for ([_][]const u8{ "\x1bP1", "\x1bP" }) |prime| {
             var s: S = .init(.{ .handler = .{} });
             defer s.deinit();
             s.nextSlice(prime);
@@ -6026,6 +6027,20 @@ test "stream: nextSliceUntil apc introducers" {
             try testing.expectEqual(c1, start.byte);
             try testing.expectEqual(Parser.State.sos_pm_apc_string, s.parser.state);
             try testing.expectEqual(@as(usize, 1), s.handler.started);
+        }
+    }
+
+    // After an ESC or inside a CSI (the csi_param fast path), a C1
+    // introducer aborts the sequence instead of starting an APC.
+    for ([_]u8{ 0x98, 0x9E, 0x9F }) |c1| {
+        for ([_][]const u8{ "\x1b[1", "\x1b" }) |prime| {
+            var s: S = .init(.{ .handler = .{} });
+            defer s.deinit();
+            s.nextSlice(prime);
+            const input = [_]u8{ c1, 'G' };
+            try testing.expectEqual(@as(?Boundary.Stop, null), s.nextSliceUntil(&input, apc_start_set));
+            try testing.expect(s.ground());
+            try testing.expectEqual(@as(usize, 0), s.handler.started);
         }
     }
 }
@@ -6439,10 +6454,6 @@ test "stream: nextSliceUntil dcs and osc introducers" {
         // From inside a CSI, where ESC restarts.
         .{ .input = "\x1b[1\x1bP1q", .kind = .dcs, .introducer = .esc, .byte = 'P', .consumed = 5, .state = .dcs_entry },
         .{ .input = "\x1b[1\x1b]2;ab", .kind = .osc, .introducer = .esc, .byte = ']', .consumed = 5, .state = .osc_string },
-        // C1 introducers from inside a CSI. At ground they would be
-        // decoded as UTF-8 and never start a string.
-        .{ .input = "\x1b[1\x901q", .kind = .dcs, .introducer = .c1, .byte = 0x90, .consumed = 4, .state = .dcs_entry },
-        .{ .input = "\x1b[1\x9d2;ab", .kind = .osc, .introducer = .c1, .byte = 0x9D, .consumed = 4, .state = .osc_string },
     };
 
     inline for (.{ BoundaryTestHandler, BoundaryRawTestHandler }) |H| {
@@ -6463,6 +6474,17 @@ test "stream: nextSliceUntil dcs and osc introducers" {
             try testing.expectEqual(case.introducer, start.introducer);
             try testing.expectEqual(case.byte, start.byte);
             try testing.expectEqual(case.state, s.parser.state);
+        }
+    }
+
+    // C1 introducers from inside a CSI abort it rather than starting a
+    // string. At ground they would be decoded as UTF-8 too.
+    inline for (.{ BoundaryTestHandler, BoundaryRawTestHandler }) |H| {
+        for ([_][]const u8{ "\x1b[1\x901q", "\x1b[1\x9d2;ab" }) |input| {
+            var s: Stream(H) = .init(.{ .handler = .{} });
+            defer s.deinit();
+            try testing.expect(s.nextSliceUntil(input, strings_set) == null);
+            try testing.expect(s.ground());
         }
     }
 }
@@ -7041,10 +7063,8 @@ test "stream: continuation suffixes are replay safe" {
         .{ .input = "text\x1bP+qabc", .expected = "\x1bP+qabc" },
         .{ .input = "text\xE0\xA0\xF0", .expected = "\xF0" },
         .{ .input = "text\x1b[12\x1b", .expected = "\x1b" },
-        .{
-            .input = "text\x1b[12\x9D2;title",
-            .expected = "\x1b]2;title",
-        },
+        // Raw C1 bytes abort the sequence rather than starting a new one.
+        .{ .input = "text\x1b[12\x9D2;title", .expected = "" },
         .{ .input = "text\x1b_Gabc\x9B1", .expected = "\x1b[1" },
     };
 

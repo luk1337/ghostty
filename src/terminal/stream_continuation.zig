@@ -679,10 +679,10 @@ test "tracker restarts at a C1 introducer that aborts a string" {
         .{ .input = "\x1b_hello\x9b1;2", .expected = "\x1b[1;2" },
         .{ .input = "\x1b_hello\x90q", .expected = "\x1bPq" },
         .{ .input = "\x1b_hello\x9d2;t", .expected = "\x1b]2;t" },
-        .{ .input = "\x1b[1\x9fx", .expected = "\x1b_x" },
-        .{ .input = "\x1b[1\x9b2", .expected = "\x1b[2" },
-        .{ .input = "\x1b\x98", .expected = "\x1bX" },
-        .{ .input = "\x1b[1\x9e", .expected = "\x1b^" },
+        .{ .input = "\x1bP1\x9fx", .expected = "\x1b_x" },
+        .{ .input = "\x1bP1\x9b2", .expected = "\x1b[2" },
+        .{ .input = "\x1bP\x98", .expected = "\x1bX" },
+        .{ .input = "\x1bP1\x9e", .expected = "\x1b^" },
 
         // String payload states take high bytes as data, and re-entering
         // the same state does not restart it.
@@ -741,7 +741,7 @@ test "validate rejects C1 introducers as non-canonical" {
     );
     try testing.expectError(
         error.NonCanonicalContinuation,
-        validate("\x1b[1\x9b2"),
+        validate("\x1bP1\x9b2"),
     );
 
     // High bytes in string payloads are data, not introducers.

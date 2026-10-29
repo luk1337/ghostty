@@ -510,8 +510,9 @@ typedef enum GHOSTTY_ENUM_TYPED {
    * 0x9D (OSC).
    *
    * When the stream is at ground, these bytes are decoded as UTF-8 and do
-   * not start a string. They only start a string when they arrive while
-   * the stream is already inside another escape sequence.
+   * not start a string. After an ESC or inside a CSI sequence they abort
+   * that sequence instead. They only start a string when they arrive
+   * inside another string or a DCS header.
    */
   GHOSTTY_TERMINAL_STRING_INTRODUCER_C1 = 1,
   GHOSTTY_TERMINAL_STRING_INTRODUCER_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
