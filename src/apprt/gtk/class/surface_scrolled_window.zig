@@ -208,11 +208,14 @@ pub const SurfaceScrolledWindow = extern struct {
     }
 
     /// Update our size request to match the smallest size our surface
-    /// can be resized to within a split.
+    /// can be resized to within a split. This is applied to the scrolled
+    /// window rather than ourselves so that the split title bar comes on
+    /// top of it, like Tilix.
     pub fn syncSplitMinSize(self: *Self) void {
-        const surface = self.private().surface orelse return;
+        const priv = self.private();
+        const surface = priv.surface orelse return;
         const size = surface.getSplitMinSize();
-        self.as(gtk.Widget).setSizeRequest(
+        priv.scrolled_window.as(gtk.Widget).setSizeRequest(
             @intCast(size.width),
             @intCast(size.height),
         );
